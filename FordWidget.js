@@ -38,7 +38,7 @@
  * - After FordPass is connected, "Fetch telemetry" also downloads the photo Ford
  *   shows for your VIN in the FordPass app (refreshed every 30 days) and caches
  *   it next to the telemetry cache. Order: FordPass garage profile image, then
- *   Ford's image service. Menu > Truck photo picks a view angle (1-5), a photo
+ *   Ford's image service. Menu > Vehicle photo picks a view angle (1-5), a photo
  *   from your library (worst case; a cut-out PNG with no background looks best),
  *   or the plain icon. URL: scriptable:///run?scriptName=FordWidget&action=photo
  *
@@ -53,19 +53,19 @@
  *   rounded to ~1 km, no account).
  * - Scriptable's Keychain is shared by ALL scripts in the app. Any other script
  *   you install can read FordWidget's tokens, and those tokens can unlock and
- *   start your truck. Don't install Scriptable scripts you haven't read. To
+ *   start your vehicle. Don't install Scriptable scripts you haven't read. To
  *   revoke access, use Menu > Sign out of Ford and change your Ford password.
  * - Anything (a web page, a QR code) can open a scriptable:// link to this script.
  *   That's why every command shows a confirmation alert first. Only tap "Send
  *   command" if you started it.
  * - When asking for help, don't post your VIN, location or screenshots of
  *   View details. Errors never include tokens or passwords.
- * - Remote start: only when the truck is parked outdoors, never in a garage.
+ * - Remote start: only when the vehicle is parked outdoors, never in a garage.
  *
  * BEHAVIOR / LIMITS
  * - Widgets draw from the cache and never send commands. One exception: the
  *   EVENING CHECK. The first widget refresh after the chosen hour (default 9 PM)
- *   reads the truck's last cloud state once (read-only, does not wake the modem),
+ *   reads the vehicle's last cloud state once (read-only, does not wake the modem),
  *   at most twice per evening, 6 s timeouts, and notifies you about problems.
  *   iOS decides exactly when widgets refresh, so the time is approximate.
  * - Remote start shows a live countdown (iOS ticks it). Right after Start it is an
@@ -131,7 +131,7 @@ const SETTINGS = Object.freeze({
   lowTire: 30,
   homeRadius: 150,
   timeout: 12,
-  // Truck photo sources (both need the FordPass CAT token). Checked 2026-11-07:
+  // Vehicle photo sources (both need the FordPass CAT token). Checked 2026-11-07:
   // the old public www.digitalservices.ford.com image host no longer resolves.
   garage: 'https://api.vehicle.ford.com/api/fpcpl-user-garage-service/v1/user/garage',
   imageService: 'https://api.mps.ford.com/api/imageservice/data',
@@ -760,7 +760,7 @@ class FordAPIClient {
     c.notice = errors.join('\n'); this.store.write(c);
     return { cache: c, note: errors.length ? 'Some sources failed; available telemetry was saved.\n' + c.notice : 'Cloud telemetry saved. This did not wake the modem.' };
   }
-  // Street name for the parked spot. Apple's geocoder, app runs only, only when the truck moved.
+  // Street name for the parked spot. Apple's geocoder, app runs only, only when the vehicle moved.
   async updatePlace() {
     this.store.assertLease();
     const c = this.store.read(), p = c && c.fields && c.fields.position && c.fields.position.value;
@@ -793,7 +793,7 @@ class FordAPIClient {
     const meta = c.image;
     if (!force && meta && meta.angle === angle && meta.at > now() - SETTINGS.imageMaxAge &&
       this.store.fm.fileExists(this.store.imagePath(vin, false))) return null;
-    if (!secretGet('token.mobile')) throw new Error('Connect FordPass first. Ford only serves your truck’s photo to a signed-in account.');
+    if (!secretGet('token.mobile')) throw new Error('Connect FordPass first. Ford only serves your vehicle’s photo to a signed-in account.');
     const h = { 'auth-token': await this.auth.token('mobile'), 'Application-Id': SETTINGS.applicationId };
     const garage = async () => {
       const g = await this.auth.request('image.garage', SETTINGS.garage, 'GET', null,
@@ -845,7 +845,7 @@ class FordAPIClient {
     if (c.commandAfter > now()) throw new Error('A command was just sent. Wait at least 30 seconds.');
     if (command === 'refresh' && c.wakeAfter > now()) throw new Error('Wake cooldown active. Wait 15 minutes between wake attempts.');
     if (command === 'start' && c.fields.doors && c.fields.doors.value === 'Ajar')
-      throw new Error('Cached door/hood status is ajar. Check the truck before remote start.');
+      throw new Error('Cached door/hood status is ajar. Check the vehicle before remote start.');
     // Persist before dispatch: a killed process or ambiguous timeout must not replay.
     c.commandAfter = now() + SETTINGS.commandInterval;
     if (command === 'refresh') c.wakeAfter = now() + SETTINGS.wakeInterval;
@@ -883,7 +883,7 @@ class FordAPIClient {
 
 // Display options: app-wide defaults from Customize widgets, overridable per widget
 // through its Parameter, e.g. "controls", "fuel tires lock", "-photo", "bar".
-const METRICS = Object.freeze({ photo: 'Truck photo', fuel: 'Fuel & range', battery: '12V battery', tires: 'Tire pressures',
+const METRICS = Object.freeze({ photo: 'Vehicle photo', fuel: 'Fuel & range', battery: '12V battery', tires: 'Tire pressures',
   oil: 'Oil life', lock: 'Lock state', odometer: 'Odometer', doors: 'Doors', temp: 'Outside temperature',
   parked: 'Parked location' });
 const METRIC_ALIASES = Object.freeze({ picture: 'photo', image: 'photo', truck: 'photo', range: 'fuel', '12v': 'battery',
@@ -940,7 +940,7 @@ class WidgetRenderer {
     const near = home && meters(home, p) <= SETTINGS.homeRadius;
     const known = this.cache.place && meters(this.cache.place, p) < 50 ? this.cache.place.label : null;
     return { label: near ? 'Home' : known || `${p.lat.toFixed(4)}, ${p.lon.toFixed(4)}`, home: !!near,
-      at: this.fields.position.at, url: `https://maps.apple.com/?${form({ ll: `${p.lat},${p.lon}`, q: this.prefs.name || 'F-150' })}` };
+      at: this.fields.position.at, url: `https://maps.apple.com/?${form({ ll: `${p.lat},${p.lon}`, q: this.prefs.name || 'Ford' })}` };
   }
   temp() { const t = finite(this.value('outsideTemp')); return t === null ? '—' : `${fahrenheit(t)}°F`; }
   nextRefresh() {
@@ -986,7 +986,7 @@ class WidgetRenderer {
   }
   truck(stack, w, h) {
     if (!this.on('photo')) return null;
-    if (!this.image) return this.symbol(stack, 'truck.pickup.side.fill', h);
+    if (!this.image) return this.symbol(stack, 'car.side.fill', h);
     const s = this.image.size, k = Math.min(w / s.width, h / s.height);
     const i = stack.addImage(this.image); i.imageSize = new Size(Math.round(s.width * k), Math.round(s.height * k));
     if (this.prefs.imageMode === 'custom') i.cornerRadius = 8;
@@ -1041,7 +1041,7 @@ class WidgetRenderer {
   }
   buttons(stack, cols, w, h) {
     const actions = [['lock', 'Lock', 'lock.fill'], ['unlock', 'Unlock', 'lock.open.fill'],
-      this.remote() ? ['stop', 'Stop', 'stop.circle.fill'] : ['start', 'Start', 'power'], ['refresh', 'Refresh', 'arrow.clockwise']];
+      this.remote() ? ['stop', 'Stop', 'stop.circle.fill'] : ['start', 'Start', 'power'], ['refresh', 'Refresh', 'arrow.clockwise']].filter(a => !this.prefs.compatibility || this.prefs.compatibility.commands[a[0]] !== false);
     const grid = stack.addStack(); grid.layoutVertically(); grid.spacing = 6;
     for (let i = 0; i < actions.length; i += cols) {
       const row = grid.addStack(); row.spacing = 6;
@@ -1131,8 +1131,8 @@ class WidgetRenderer {
       if (pl) w.url = pl.url;
     } else {
       const head = w.addStack(); head.centerAlignContent();
-      this.symbol(head, 'truck.pickup.side.fill', 12, white); head.addSpacer(4);
-      tiny(head, this.prefs.name || 'F-150', 13, true); head.addSpacer();
+      this.symbol(head, 'car.side.fill', 12, white); head.addSpacer(4);
+      tiny(head, this.prefs.name || 'Ford', 13, true); head.addSpacer();
       if (this.on('lock')) this.symbol(head, lockIcon, 11, white);
       w.addSpacer(3);
       const fuelRow = w.addStack(); fuelRow.centerAlignContent();
@@ -1161,7 +1161,7 @@ class WidgetRenderer {
     const w = this.frame([12, 12, 10, 12]);
     const top = w.addStack(); top.centerAlignContent(); top.spacing = 6;
     this.truck(top, 64, 24);
-    this.text(top, this.prefs.name || 'F-150', 13, true);
+    this.text(top, this.prefs.name || 'Ford', 13, true);
     w.addSpacer(6);
     if (this.on('fuel')) {
       this.text(w, `Fuel ${this.number('fuel', '%')}`, 15, true);
@@ -1181,7 +1181,7 @@ class WidgetRenderer {
     const w = this.frame([12, 14, 10, 14]);
     const row = w.addStack(); row.layoutHorizontally(); row.spacing = 14;
     const left = row.addStack(); left.layoutVertically(); left.spacing = 4;
-    this.text(left, this.prefs.name || 'F-150', 17, true);
+    this.text(left, this.prefs.name || 'Ford', 17, true);
     if (!large && controls) {
       // Medium + controls: compact status on the left, a 2x2 button grid on the right.
       if (!this.runningBadge(left, 11)) this.truck(left, 124, 34);
@@ -1218,10 +1218,10 @@ class AppController {
   async setupVehicle() {
     const old = secretGet('vehicle') || {};
     const values = await input('Vehicle setup', 'One vehicle. Changing VIN clears saved telemetry and disconnects FordConnect consent for the old vehicle.', [
-      { label: '17-character VIN', value: old.vin }, { label: 'Badge / name', value: old.name || 'F-150 STX' },
+      { label: '17-character VIN', value: old.vin }, { label: 'Badge / name', value: old.name || 'Ford' },
     ]);
     if (!values) return null;
-    const vin = values[0].toUpperCase(), name = values[1] || 'F-150';
+    const vin = values[0].toUpperCase(), name = values[1] || 'Ford';
     if (!vinOK(vin)) throw new Error('Enter a valid 17-character VIN (no I, O, Q).');
     if (old.vin && old.vin !== vin) {
       secretRemove('token.official');
@@ -1229,6 +1229,57 @@ class AppController {
     }
     // Photo choices belong to the VIN; a new truck starts from Ford's photo again.
     const prefs = Object.assign({}, old.vin === vin ? old : {}, { vin, name }); secretSet('vehicle', prefs); return prefs;
+  }
+  async compatibility(prefs) {
+    selfTest();
+    await message('Self-test passed', 'Offline script checks passed. Next, check available vehicle features.');
+    let c = this.store.read() || { fields: {} }, note = 'Using saved readings.';
+    if (secretGet('token.official') || secretGet('token.mobile')) {
+      try { const result = await new FordAPIClient(this.auth, this.store, prefs).getVehicleStatus(); c = result.cache; note = result.note; }
+      catch (e) { note = 'Cloud check failed: ' + e.message + '\nUsing saved readings.'; }
+    } else note = 'Connect FordPass or FordConnect and rerun this check for cloud suggestions.';
+    const fields = c.fields || {};
+    const mapping = { fuel: ['fuel', 'range'], battery: ['battery'], tires: ['fl', 'fr', 'rl', 'rr'], oil: ['oil'], lock: ['lock'], odometer: ['odometer'], doors: ['doors'], temp: ['outsideTemp'], parked: ['position'] };
+    const previous = prefs.compatibility;
+    const cfg = prefs.widget || {}, show = Object.assign({}, cfg.show || {});
+    if (!previous) for (const k of Object.keys(mapping)) {
+      if (show[k] === undefined) show[k] = mapping[k].some(f => fields[f] && fields[f].value != null);
+    }
+    const commands = Object.assign({ lock: true, unlock: true, start: true, stop: true, refresh: true }, previous && previous.commands || {});
+    const verified = Object.assign({}, previous && previous.verified || {});
+    await message('Compatibility check', note + '\n\nReported readings are suggested. Missing readings are unverified, not proof of incompatibility. Select what is available in your Ford app.');
+    const labels = { lock: 'Lock', unlock: 'Unlock', start: 'Remote start', stop: 'Remote stop', refresh: 'Wake / refresh' };
+    for (;;) {
+      const a = new Alert(); a.title = 'Vehicle features';
+      a.message = 'Tap to select or deselect features. Commands are unverified until tested. Your selections can be changed later.';
+      const keys = Object.keys(mapping), actions = Object.keys(labels);
+      keys.forEach(k => a.addAction(`${show[k] ? '✓' : '○'} ${METRICS[k]}${mapping[k].some(f => fields[f] && fields[f].value != null) ? ' · reported' : ' · unverified'}`));
+      actions.forEach(k => a.addAction(`${commands[k] ? '✓' : '○'} ${labels[k]} · ${verified[k] ? 'owner confirmed' : 'unverified'}`));
+      a.addAction('Enable reported readings'); a.addAction('Test a command…'); a.addCancelAction('Done');
+      const i = await a.presentSheet();
+      if (i < 0) break;
+      if (i < keys.length) show[keys[i]] = !show[keys[i]];
+      else if (i < keys.length + actions.length) { const k = actions[i - keys.length]; commands[k] = !commands[k]; }
+      else if (i === keys.length + actions.length) {
+        for (const k of keys) if (mapping[k].some(f => fields[f] && fields[f].value != null)) show[k] = true;
+      } else {
+        const t = new Alert(); t.title = 'Optional command test'; t.message = 'Each test sends a real command after a separate confirmation. Check the vehicle yourself. Start only outdoors.';
+        actions.forEach(k => t.addAction(labels[k])); t.addCancelAction('Cancel');
+        const n = await t.presentSheet();
+        if (n >= 0) {
+          const k = actions[n];
+          const sent = await this.action(k, prefs, true);
+          if (sent) {
+            const v = new Alert(); v.title = 'Did the vehicle complete it?'; v.message = 'Ford accepting a request does not confirm completion. Check your vehicle before answering.';
+            v.addAction('Yes, completed'); v.addAction('No / unsure'); v.addCancelAction('Cancel');
+            const answer = await v.presentAlert();
+            if (answer >= 0) verified[k] = answer === 0;
+          }
+        }
+      }
+      prefs.widget = Object.assign({}, cfg, { show }); prefs.compatibility = { commands, verified }; secretSet('vehicle', prefs);
+    }
+    prefs.widget = Object.assign({}, cfg, { show }); prefs.compatibility = { commands, verified }; secretSet('vehicle', prefs);
   }
   async details(prefs) {
     const c = this.store.read() || {}, f = c.fields || {};
@@ -1243,7 +1294,7 @@ class AppController {
     });
     const photo = prefs.imageMode === 'off' ? 'Icon (photo off)' : prefs.imageMode === 'custom' ? 'From your Photos'
       : c.image && c.image.source ? `${c.image.source} · ${age(c.image.at)}` : 'Not downloaded yet';
-    lines.push(`Truck photo: ${photo}`);
+    lines.push(`Vehicle photo: ${photo}`);
     const n = c.night;
     lines.push(`Evening check: ${!nightSettings(prefs).enabled ? 'Off' : n && n.done ? `${n.problems.length ? n.problems.join(', ') : 'All good'} · ${age(n.at)}` : 'Not run yet'}`);
     if (c.lastCommand) lines.push(`Last request: ${c.lastCommand.action}\n${c.lastCommand.outcome} · ${age(c.lastCommand.at)}`);
@@ -1251,7 +1302,7 @@ class AppController {
   }
   async truckPhoto(prefs) {
     const api = new FordAPIClient(this.auth, this.store, prefs);
-    const a = new Alert(); a.title = 'Truck photo';
+    const a = new Alert(); a.title = 'Vehicle photo';
     a.message = 'Use the picture Ford shows for your VIN in the FordPass app, or pick your own. A cut-out PNG with no background looks best on the widget.';
     ['Download from Ford', 'Download from Ford: choose view', 'Choose from Photos…', 'Use simple truck icon'].forEach(l => a.addAction(l));
     a.addCancelAction('Cancel');
@@ -1261,7 +1312,7 @@ class AppController {
       let angle = null;
       if (choice === 1) {
         const v = new Alert(); v.title = 'Choose a view';
-        v.message = 'Ford renders views 1-5. View 4 is the usual FordPass angle. Some trucks only have one view.';
+        v.message = 'Ford renders views 1-5. View 4 is the usual FordPass angle. Some vehicles only have one view.';
         for (let n = 1; n <= 5; n++) v.addAction(`View ${n}${n === 4 ? ' (default)' : ''}`);
         v.addCancelAction('Cancel');
         const pick = await v.presentSheet();
@@ -1269,8 +1320,8 @@ class AppController {
         angle = pick + 1;
       }
       Object.assign(prefs, { imageMode: 'auto', imageAngle: angle }); secretSet('vehicle', prefs);
-      try { await message('Truck photo', `Downloaded from ${await api.updateVehicleImage(true)}.`); }
-      catch (e) { await message('Truck photo not available', e.message + '\n\nYou can choose a picture from Photos instead.'); return; }
+      try { await message('Vehicle photo', `Downloaded from ${await api.updateVehicleImage(true)}.`); }
+      catch (e) { await message('Vehicle photo not available', e.message + '\n\nYou can choose a picture from Photos instead.'); return; }
     } else if (choice === 2) {
       let img;
       try { img = await Photos.fromLibrary(); } catch (_) { return; }
@@ -1297,7 +1348,7 @@ class AppController {
       const problems = nightProblems(c.fields);
       c.night = Object.assign({}, c.night, { done: true, at: now(), problems }); this.store.write(c);
       if (problems.length || night.notifyOk) {
-        const note = new Notification(); note.title = `${prefs.name || 'F-150'} · evening check`;
+        const note = new Notification(); note.title = `${prefs.name || 'Ford'} · evening check`;
         note.body = problems.length ? problems.join(' · ') : 'Locked, closed and all readings normal.';
         note.openURL = new WidgetRenderer(prefs, c).url();
         try { await note.schedule(); } catch (_) { /* the widget still shows the result */ }
@@ -1315,32 +1366,32 @@ class AppController {
     a.addCancelAction('Close');
     const i = await a.presentAlert();
     if (i === 0) Safari.open(pl.url);
-    if (i === 1) { const p = c.fields.position.value; prefs.home = { lat: p.lat, lon: p.lon }; secretSet('vehicle', prefs); await message('Home saved', 'The widget will say “Parked · Home” when the truck is within about 150 m of here.'); }
+    if (i === 1) { const p = c.fields.position.value; prefs.home = { lat: p.lat, lon: p.lon }; secretSet('vehicle', prefs); await message('Home saved', 'The widget will say “Parked · Home” when the vehicle is within about 150 m of here.'); }
     if (i === 2) { delete prefs.home; secretSet('vehicle', prefs); }
   }
-  // No weather service polling: the truck reports its own outside temperature.
+  // No weather service polling: the vehicle reports its own outside temperature.
   async startWeather() {
     const f = (this.store.read() || {}).fields || {}, t = f.outsideTemp, p = f.position && f.position.value;
     const hint = deg => deg <= 40 ? ' Cold: a full run warms the cabin.' : deg >= 85 ? ' Hot: a full run cools the cabin.' : '';
-    if (t && t.at && t.at > now() - 2 * 3600000) return `Outside ${fahrenheit(t.value)}°F (truck sensor, ${age(t.at)}).${hint(fahrenheit(t.value))}`;
+    if (t && t.at && t.at > now() - 2 * 3600000) return `Outside ${fahrenheit(t.value)}°F (vehicle sensor, ${age(t.at)}).${hint(fahrenheit(t.value))}`;
     if (p) {
       try {
-        // Only when the truck's reading is old: one request, ~1 km-rounded position, no key, no account.
+        // Only when the vehicle's reading is old: one request, ~1 km-rounded position, no key, no account.
         const r = new Request('https://api.open-meteo.com/v1/forecast?' + form({ latitude: p.lat.toFixed(2), longitude: p.lon.toFixed(2),
           current: 'temperature_2m', temperature_unit: 'fahrenheit' }));
         r.timeoutInterval = 5;
         const j = await r.loadJSON();
         const v = finite(j && j.current && j.current.temperature_2m);
-        if (v !== null) return `Outside about ${Math.round(v)}°F near the truck (Open-Meteo, now).${hint(Math.round(v))}`;
+        if (v !== null) return `Outside about ${Math.round(v)}°F near the vehicle (Open-Meteo, now).${hint(Math.round(v))}`;
       } catch (_) { /* no temperature line */ }
     }
-    return t ? `Outside ${fahrenheit(t.value)}°F (truck sensor, ${age(t.at)}).` : '';
+    return t ? `Outside ${fahrenheit(t.value)}°F (vehicle sensor, ${age(t.at)}).` : '';
   }
   async customize(prefs) {
     for (;;) {
       const o = widgetOptions(prefs, ''), cfg = prefs.widget || {};
       const a = new Alert(); a.title = 'Customize widgets';
-      a.message = 'Applies to every FordWidget widget. To change one widget, edit it and type words in Parameter: "controls", "fuel tires lock", "-photo", "bar". Lock Screen: "fuel", "lock", "tires" (circle) or "status", "tires", "parked" (rectangle).\n\nEvening check: the first widget refresh after the set hour reads the truck’s last state once and notifies you of problems.';
+      a.message = 'Applies to every FordWidget widget. To change one widget, edit it and type words in Parameter: "controls", "fuel tires lock", "-photo", "bar". Lock Screen: "fuel", "lock", "tires" (circle) or "status", "tires", "parked" (rectangle).\n\nEvening check: the first widget refresh after the set hour reads the vehicle’s last state once and notifies you of problems.';
       const keys = Object.keys(METRICS);
       keys.forEach(k => a.addAction(`${o.show[k] ? '✓' : '○'}  ${METRICS[k]}`));
       a.addAction(`Medium layout: ${o.layout.medium === 'controls' ? 'Buttons' : 'Status'}`);
@@ -1385,7 +1436,7 @@ class AppController {
     try { await n.schedule(); } catch (_) { /* The foreground alert remains available if notifications are denied. */ }
     await message('FordWidget', body);
   }
-  async action(action, prefs) {
+  async action(action, prefs, compatibilityTest = false) {
     const api = new FordAPIClient(this.auth, this.store, prefs);
     if (action === 'photo') { await this.truckPhoto(prefs); return; }
     if (action === 'parked') { await this.parked(prefs); return; }
@@ -1393,23 +1444,27 @@ class AppController {
       const result = await api.getVehicleStatus();
       await api.updatePlace();
       if ((prefs.imageMode || 'auto') === 'auto' && secretGet('token.mobile')) {
-        try { const source = await api.updateVehicleImage(false); if (source) result.note += `\nTruck photo downloaded from ${source}.`; }
-        catch (e) { result.note += '\nTruck photo: ' + e.message.split('\n')[0]; }
+        try { const source = await api.updateVehicleImage(false); if (source) result.note += `\nVehicle photo downloaded from ${source}.`; }
+        catch (e) { result.note += '\nVehicle photo: ' + e.message.split('\n')[0]; }
       }
       await message('Telemetry', result.note); return;
     }
     if (!Object.prototype.hasOwnProperty.call(COMMANDS, action)) throw new Error('Unknown action.');
+    if (!compatibilityTest && prefs.compatibility && prefs.compatibility.commands[action] === false) throw new Error('This command is disabled in Vehicle features.');
     const a = new Alert(); a.title = `${action === 'refresh' ? 'Wake vehicle' : action.toUpperCase()} · ${prefs.name}`;
     const weather = action === 'start' ? await this.startWeather() : '';
-    a.message = action === 'start' ? `${weather ? weather + '\n\n' : ''}Use only with the truck safely parked outdoors. Sends Lock, confirms that command, then requests engine start.` : action === 'refresh' ? 'Requests a modem wake/status refresh. Updated readings may take time. Limited to one attempt per 15 minutes.' : `Send ${action} to your vehicle?\n\nOnly continue if you tapped this in FordWidget.`;
+    a.message = action === 'start' ? `${weather ? weather + '\n\n' : ''}Use only with the vehicle safely parked outdoors. Sends Lock, confirms that command, then requests engine start.` : action === 'refresh' ? 'Requests a modem wake/status refresh. Updated readings may take time. Limited to one attempt per 15 minutes.' : `Send ${action} to your vehicle?\n\nOnly continue if you tapped this in FordWidget.`;
+    if (prefs.compatibility && !prefs.compatibility.verified[action]) a.message += '\n\nUnverified for this vehicle.';
     a.addAction('Send command'); a.addCancelAction('Cancel');
     if (await a.presentAlert() < 0) return;
     let result;
-    try { result = await api.sendCommand(prefs.vin, action); }
+    let sent = false;
+    try { result = await api.sendCommand(prefs.vin, action); sent = true; }
     catch (e) { result = 'Command not confirmed.\n' + e.message; }
     // Build a new timeline from actual telemetry, never predicted command effects.
     Script.setWidget(new WidgetRenderer(prefs, this.store.read()).build('large'));
     await this.notify(result);
+    return sent;
   }
   async run() {
     if (config.runsInWidget) {
@@ -1432,11 +1487,11 @@ class AppController {
       const saved = secretGet('credentials');
       if (saved && saved.password !== undefined) secretSet('credentials', { username: saved.username });
       let prefs = secretGet('vehicle');
-      if (!prefs) prefs = await this.setupVehicle();
+      if (!prefs) { prefs = await this.setupVehicle(); if (prefs) await this.compatibility(prefs); }
       if (!prefs) return;
       const action = args.queryParameters.action;
       if (action) { await this.action(action, prefs); return; }
-      const menu = new Alert(); menu.title = prefs.name; menu.message = 'Telemetry reads do not wake the truck. Refresh sends an explicit wake request.';
+      const menu = new Alert(); menu.title = prefs.name; menu.message = 'Telemetry reads do not wake the vehicle. Refresh sends an explicit wake request.';
       const items = [
         ['Fetch telemetry', () => this.action('fetch', prefs)],
         ['Lock', () => this.action('lock', prefs)],
@@ -1447,9 +1502,10 @@ class AppController {
         ['View details', () => this.details(prefs)],
         ['Parked location', () => this.parked(prefs)],
         ['Customize widgets', () => this.customize(prefs)],
-        ['Truck photo', () => this.truckPhoto(prefs)],
+        ['Vehicle photo', () => this.truckPhoto(prefs)],
         ['Connect FordPass', () => this.auth.connectMobile()],
         ['Connect FordConnect', () => this.auth.connectOfficial()],
+        ['Vehicle features / compatibility', () => this.compatibility(prefs)],
         ['Vehicle setup', async () => { prefs = await this.setupVehicle() || prefs; }],
         ['Sign out of Ford', () => this.signOut()],
         ['Run self-test', async () => { selfTest(); await message('Self-test', 'All offline checks passed. No network calls or commands.'); }],
