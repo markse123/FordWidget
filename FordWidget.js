@@ -1457,7 +1457,7 @@ class AppController {
     for (;;) {
       const cfg = prefs.widget || {}, saved = Object.assign({ small: 'classic', medium: 'classic', large: 'classic' }, cfg.design || {});
       const picker = new Alert(); picker.title = `${family[0].toUpperCase() + family.slice(1)} design`;
-      picker.message = 'Choose a design to preview it with your saved vehicle data, then decide whether to use it.';
+      picker.message = 'Choose a design to preview it. Tap Close on the preview, then tap Use design to save it.';
       designs.forEach(d => picker.addAction(`${saved[family] === d ? '✓ ' : ''}${d[0].toUpperCase() + d.slice(1)}`));
       picker.addCancelAction('Done'); const choice = await picker.presentSheet(); if (choice < 0) return;
       const design = designs[choice], previewPrefs = Object.assign({}, prefs, { widget: Object.assign({}, cfg, { design: Object.assign({}, saved, { [family]: design }) }) });
@@ -1467,7 +1467,7 @@ class AppController {
       else await preview.presentLarge();
       const confirm = new Alert(); confirm.title = `Use ${design}?`; confirm.message = `Apply this design to ${family} widgets. You can change it again later.`;
       confirm.addAction('Use design'); confirm.addCancelAction('Keep current');
-      if (await confirm.presentAlert() === 0) { prefs.widget = previewPrefs.widget; secretSet('vehicle', prefs); }
+      if (await confirm.presentAlert() === 0) { prefs.widget = previewPrefs.widget; secretSet('vehicle', prefs); return; }
     }
   }
   async customize(prefs) {
