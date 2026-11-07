@@ -4,6 +4,7 @@
  * FordWidget — single-file Scriptable widget (North American FordPass profile).
  * Official source and instructions: https://github.com/rushilpunu/FordWidget
  * Only install it from there, and read it first (see SECURITY & PRIVACY).
+ * MIT License, Copyright (c) 2026 rushilpunu. See LICENSE in the repository.
  *
  * SETUP
  * 1. Copy this file into Scriptable as FordWidget. Run it IN THE APP first.

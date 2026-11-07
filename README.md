@@ -146,3 +146,7 @@ Menu › **Sign out of Ford**, then delete the script and the `FordWidget` folde
 ## Credits
 
 Ford login and API details are based on [marq24/ha-fordpass](https://github.com/marq24/ha-fordpass), [marq24/ha-fordconnect-query](https://github.com/marq24/ha-fordconnect-query) and [itchannel/fordpass-ha](https://github.com/itchannel/fordpass-ha). Thanks to their authors.
+
+## License
+
+[MIT](LICENSE). Free to use, modify and share. Provided as is, with no warranty. You're responsible for how you use it with your vehicle and Ford account.
