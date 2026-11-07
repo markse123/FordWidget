@@ -894,10 +894,11 @@ const ACCESSORY_VIEWS = ['fuel', 'lock', 'tires', 'parked', 'status'];
 function widgetOptions(prefs, parameter) {
   const base = (prefs && prefs.widget) || {};
   const show = Object.assign(Object.fromEntries(Object.keys(METRICS).map(k => [k, true])), base.show || {});
-  const opts = { layout: { medium: base.medium || 'status', large: 'controls' }, unit: base.unit === 'bar' ? 'bar' : 'psi', vin: null, view: null };
+  const opts = { design: Object.assign({ small: 'classic', medium: 'classic', large: 'classic' }, base.design || {}), layout: { medium: base.medium || 'status', large: 'controls' }, unit: base.unit === 'bar' ? 'bar' : 'psi', vin: null, view: null };
   const only = [];
   for (const raw of String(parameter || '').toLowerCase().split(/[\s,;]+/).filter(Boolean)) {
     if (vinOK(raw.toUpperCase())) { opts.vin = raw.toUpperCase(); continue; }
+    if (['classic', 'dashboard', 'showcase'].includes(raw)) { opts.design = { small: raw, medium: raw, large: raw }; continue; }
     if (raw === 'controls' || raw === 'buttons') { opts.layout.medium = opts.layout.large = 'controls'; continue; }
     if (raw === 'status' || raw === 'info') { opts.layout.medium = opts.layout.large = 'status'; opts.view = opts.view || 'status'; continue; }
     if (raw === 'bar' || raw === 'psi') { opts.unit = raw; continue; }
@@ -1173,7 +1174,66 @@ class WidgetRenderer {
     this.text(w, notice || `Updated ${age(this.oldest())}`, 9, false, this.muted);
     return w;
   }
+  // Alternative layouts use only cached readings and the same action handlers as Classic.
+  buildDesign(family, design, notice) {
+    const w = this.frame([12, 14, 10, 14]);
+    w.backgroundColor = Color.dynamic(new Color('E6E8EB'), new Color('101B30'));
+    const isSmall = family === 'small', isLarge = family === 'large';
+    const headline = row => {
+      const col = row.addStack(); col.layoutVertically(); col.spacing = 3;
+      this.text(col, this.prefs.name || 'Ford', isSmall ? 14 : 17, true);
+      if (this.on('fuel')) this.text(col, `${this.number('range', ' mi')} to E / ${this.number('fuel', '%')}`, isSmall ? 11 : 14, false, this.muted);
+      if (this.on('odometer')) this.text(col, `Odometer: ${this.number('odometer', ' mi')}`, 10, false, this.muted);
+      return col;
+    };
+    const info = (stack, label, value) => {
+      this.text(stack, label, isSmall ? 9 : 11, true);
+      this.text(stack, value, isSmall ? 10 : 12, true, this.accent);
+    };
+    const status = stack => {
+      if (this.on('lock')) info(stack, 'Locks', this.value('lock') || 'Unknown');
+      if (this.on('doors')) info(stack, 'Doors', this.value('doors') || 'Unknown');
+      if (this.on('oil')) info(stack, 'Oil life', this.number('oil', '%'));
+      if (this.on('battery')) info(stack, '12V battery', this.value('battery') !== null ? this.number('battery', '%') : this.value('batteryHealth') || 'Unknown');
+    };
+    if (isSmall) {
+      if (design === 'showcase') {
+        headline(w); w.addSpacer(4);
+        if (!this.runningBadge(w, 9)) this.lockPill(w);
+        w.addSpacer(); this.centered(w, row => this.truck(row, 116, 42));
+      } else {
+        const row = w.addStack(); row.spacing = 6;
+        const left = row.addStack(); left.layoutVertically(); left.spacing = 4;
+        this.truck(left, 70, 32);
+        if (this.on('fuel')) { this.text(left, this.number('fuel', '%'), 13, true); this.gauge(left, 65); this.text(left, this.number('range', ' mi'), 10); }
+        const right = row.addStack(); right.layoutVertically(); right.spacing = 2; status(right);
+      }
+    } else if (design === 'showcase' && !isLarge) {
+      const row = w.addStack(); row.spacing = 8; headline(row); row.addSpacer(); this.truck(row, 120, 54);
+      w.addSpacer(4); this.parkedRow(w, 10); w.addSpacer(); this.buttons(w, 4, 62, 38);
+    } else {
+      const head = w.addStack(); head.spacing = 8; headline(head); head.addSpacer(); this.truck(head, isLarge ? 140 : 95, isLarge ? 60 : 40);
+      if (this.on('fuel')) { w.addSpacer(4); this.gauge(w, isLarge ? 250 : 180); }
+      w.addSpacer(5);
+      const row = w.addStack(); row.spacing = 12;
+      const left = row.addStack(); left.layoutVertically(); left.spacing = 2; status(left);
+      if (this.on('tires')) { const middle = row.addStack(); middle.layoutVertically(); middle.spacing = 2; this.tires(middle, isLarge ? 13 : 11); }
+      if (isLarge && this.on('temp')) { const right = row.addStack(); right.layoutVertically(); info(right, 'Outside', this.temp()); }
+      if (isLarge) {
+        w.addSpacer(5); this.parkedRow(w, 10);
+        if (this.remote()) { w.addSpacer(4); this.runningBadge(w, 10, true); }
+        w.addSpacer(); this.buttons(w, 4, 65, 38);
+      }
+    }
+    w.addSpacer();
+    const known = Object.values(this.fields).some(f => f && f.value !== null && f.value !== undefined);
+    const state = notice || (!known ? 'Open Scriptable to set up / fetch' : this.cache.notice ? 'Cached · source unavailable' : '');
+    this.text(w, `Updated ${age(this.oldest())}${state ? ' · ' + state : ''}`, 9, false, this.muted);
+    return w;
+  }
   build(family = 'medium', notice = '') {
+    const designFamily = family === 'extraLarge' ? 'large' : family;
+    if (['small', 'medium', 'large'].includes(designFamily) && this.opts.design[designFamily] !== 'classic' && ['dashboard', 'showcase'].includes(this.opts.design[designFamily])) return this.buildDesign(designFamily, this.opts.design[designFamily], notice);
     if (family === 'small') return this.buildSmall(notice);
     if (String(family).startsWith('accessory')) return this.buildAccessory(family, notice);
     const large = family === 'large' || family === 'extraLarge';
@@ -1387,6 +1447,29 @@ class AppController {
     }
     return t ? `Outside ${fahrenheit(t.value)}°F (vehicle sensor, ${age(t.at)}).` : '';
   }
+  async chooseDesign(prefs) {
+    const sizes = ['small', 'medium', 'large'], designs = ['classic', 'showcase', 'dashboard'];
+    const sizePicker = new Alert(); sizePicker.title = 'Choose widget size';
+    sizes.forEach(s => sizePicker.addAction(s[0].toUpperCase() + s.slice(1)));
+    sizePicker.addCancelAction('Cancel');
+    const selected = await sizePicker.presentSheet(); if (selected < 0) return;
+    const family = sizes[selected];
+    for (;;) {
+      const cfg = prefs.widget || {}, saved = Object.assign({ small: 'classic', medium: 'classic', large: 'classic' }, cfg.design || {});
+      const picker = new Alert(); picker.title = `${family[0].toUpperCase() + family.slice(1)} design`;
+      picker.message = 'Choose a design to preview it with your saved vehicle data, then decide whether to use it.';
+      designs.forEach(d => picker.addAction(`${saved[family] === d ? '✓ ' : ''}${d[0].toUpperCase() + d.slice(1)}`));
+      picker.addCancelAction('Done'); const choice = await picker.presentSheet(); if (choice < 0) return;
+      const design = designs[choice], previewPrefs = Object.assign({}, prefs, { widget: Object.assign({}, cfg, { design: Object.assign({}, saved, { [family]: design }) }) });
+      const preview = new WidgetRenderer(previewPrefs, this.store.read()).build(family);
+      if (family === 'small') await preview.presentSmall();
+      else if (family === 'medium') await preview.presentMedium();
+      else await preview.presentLarge();
+      const confirm = new Alert(); confirm.title = `Use ${design}?`; confirm.message = `Apply this design to ${family} widgets. You can change it again later.`;
+      confirm.addAction('Use design'); confirm.addCancelAction('Keep current');
+      if (await confirm.presentAlert() === 0) { prefs.widget = previewPrefs.widget; secretSet('vehicle', prefs); }
+    }
+  }
   async customize(prefs) {
     for (;;) {
       const o = widgetOptions(prefs, ''), cfg = prefs.widget || {};
@@ -1502,6 +1585,7 @@ class AppController {
         ['View details', () => this.details(prefs)],
         ['Parked location', () => this.parked(prefs)],
         ['Customize widgets', () => this.customize(prefs)],
+        ['Choose widget design', () => this.chooseDesign(prefs)],
         ['Vehicle photo', () => this.truckPhoto(prefs)],
         ['Connect FordPass', () => this.auth.connectMobile()],
         ['Connect FordConnect', () => this.auth.connectOfficial()],
@@ -1562,6 +1646,8 @@ function selfTest() {
   assert(o.layout.medium === 'controls' && o.unit === 'bar' && !o.show.photo && o.show.tires, 'saved widget options');
   o = widgetOptions({}, 'fuel, tires lock psi');
   assert(o.show.fuel && o.show.tires && o.show.lock && !o.show.oil && !o.show.photo && o.unit === 'psi', 'parameter: show only');
+  assert(widgetOptions({ widget: { design: { small: 'showcase' } } }, '').design.small === 'showcase', 'saved design');
+  assert(widgetOptions({}, 'dashboard').design.large === 'dashboard', 'design parameter override');
   o = widgetOptions({}, 'buttons -photo no-oil 1FTFW1E50JFA00001');
   assert(o.layout.medium === 'controls' && !o.show.photo && !o.show.oil && o.show.fuel && o.vin === '1FTFW1E50JFA00001', 'parameter: hide, layout, VIN');
   assert(authDetail('{"error":"invalid_grant","error_description":"AADB2C90080: The provided grant has expired."}') === ' invalid_grant: AADB2C90080: The provided grant has expired.', 'login error detail');

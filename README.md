@@ -75,6 +75,7 @@ Tap any widget to open the menu:
 | View details | Every reading with its time and source. |
 | Parked location | Open in Maps, or save the spot as **Home**. The widget then says "Parked · Home". |
 | Customize widgets | Choose what all widgets show, tire units, evening check time, and previews. |
+| Choose widget design | Preview Classic, Showcase, and Dashboard designs and select one separately for each widget size. |
 | Vehicle photo | Ford's photo from another angle, your own photo, or a plain icon. |
 | Sign out of Ford | Removes the saved Ford tokens and username from this phone. |
 | Run self-test | Offline checks. No network and no commands. |
@@ -84,6 +85,8 @@ Widget buttons (Lock, Unlock, Start, Refresh) open Scriptable and ask for confir
 > A command's receipt means Ford **accepted** it, not that the vehicle finished it. Fetch telemetry a minute later to confirm.
 
 ### Customizing
+
+**Choose widget design** previews each design using your cached data before saving a choice for small, medium, or large widgets. Classic remains the default. You can also use `classic`, `showcase`, or `dashboard` in an individual widget’s Parameter to override its design.
 
 **Customize widgets** in the menu sets the defaults for every widget. To change a single widget, type words in its **Parameter**:
 
