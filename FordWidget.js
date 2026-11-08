@@ -386,7 +386,9 @@ class FordAuthManager {
     if (body !== null) r.body = encoded ? form(body) : JSON.stringify(body);
     let status = 0;
     try {
-      const raw = await r.loadString(); status = r.response ? r.response.statusCode : 0;
+      const raw = await r.loadString();
+      this.store.assertLease();
+      status = r.response ? r.response.statusCode : 0;
       if (status < 200 || status >= 300) throw new APIError(`${name}: HTTP ${status}.${name.startsWith('auth.') ? authDetail(raw) : ''}`, status);
       let data;
       try { data = raw.trim() ? JSON.parse(raw) : {}; }
@@ -401,6 +403,8 @@ class FordAuthManager {
     }
   }
   backoff(name, status, r, headers) {
+    // An older run's response must not change the current run's gates or tokens.
+    this.store.assertLease();
     if (status === 401) {
       for (const tokenName of ['official', 'mobile', 'autonomic']) {
         const saved = secretGet('token.' + tokenName);
@@ -430,7 +434,9 @@ class FordAuthManager {
     if (headers['auth-token']) r.onRedirect = () => null;
     let status = 0;
     try {
-      const data = await r.load(); status = r.response ? r.response.statusCode : 0;
+      const data = await r.load();
+      this.store.assertLease();
+      status = r.response ? r.response.statusCode : 0;
       if (status < 200 || status >= 300) throw new APIError(`${name}: HTTP ${status}.`, status);
       const rh = r.response && r.response.headers || {};
       const key = Object.keys(rh).find(k => k.toLowerCase() === 'content-type');
