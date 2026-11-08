@@ -679,20 +679,27 @@ function nightSettings(prefs) {
   return { enabled: n.enabled !== false, hour: Number.isInteger(n.hour) ? n.hour : 21, notifyOk: !!n.notifyOk };
 }
 // What the evening check reports. Only readings Ford actually sent are judged.
-function nightProblems(f) {
+function alertSettings(prefs) {
+  const a = (prefs && prefs.alerts) || {};
+  const valid = (v, fallback, max) => Number.isFinite(v) && v >= 0 && v <= max ? v : fallback;
+  return { enabled: Object.assign({ lock: true, doors: true, tires: true, fuel: true, oil: true, battery: true, engine: true }, a.enabled || {}),
+    tire: valid(a.tire, SETTINGS.lowTire, 100), fuel: valid(a.fuel, 15, 100), oil: valid(a.oil, 10, 100), battery: valid(a.battery, 50, 100), attention: a.attention === true };
+}
+function nightProblems(f, prefs) {
+  const options = alertSettings(prefs), enabled = options.enabled;
   const v = k => f[k] && f[k].value !== null && f[k].value !== undefined ? f[k].value : null;
   const out = [];
-  if (v('lock') === 'Unlocked') out.push('Unlocked');
-  if (v('doors') === 'Ajar') out.push('Door, hood or tailgate open');
-  const low = ['fl', 'fr', 'rl', 'rr'].filter(k => finite(v(k)) !== null && v(k) < SETTINGS.lowTire);
-  if (low.length) out.push('Low tire ' + low.map(k => `${k.toUpperCase()} ${Math.round(v(k))} psi`).join(', '));
-  if (finite(v('fuel')) !== null && v('fuel') < 15) out.push(`Fuel ${Math.round(v('fuel'))}%`);
-  if (finite(v('oil')) !== null && v('oil') <= 10) out.push(`Oil life ${Math.round(v('oil'))}%`);
+  if (enabled.lock && v('lock') === 'Unlocked') out.push('Unlocked');
+  if (enabled.doors && v('doors') === 'Ajar') out.push('Door, hood or tailgate open');
+  const low = ['fl', 'fr', 'rl', 'rr'].filter(k => finite(v(k)) !== null && v(k) < options.tire);
+  if (enabled.tires && low.length) out.push('Low tire ' + low.map(k => `${k.toUpperCase()} ${Math.round(v(k))} psi`).join(', '));
+  if (enabled.fuel && finite(v('fuel')) !== null && v('fuel') < options.fuel) out.push(`Fuel ${Math.round(v('fuel'))}%`);
+  if (enabled.oil && finite(v('oil')) !== null && v('oil') <= options.oil) out.push(`Oil life ${Math.round(v('oil'))}%`);
   const health = v('batteryHealth');
-  if (finite(v('battery')) !== null && v('battery') < 50) out.push(`12V battery ${Math.round(v('battery'))}%`);
-  else if (typeof health === 'string' && /LOW|WEAK|BAD|CRITICAL|REPLACE/i.test(health)) out.push('12V battery ' + health.toLowerCase().replace(/_/g, ' '));
+  if (enabled.battery && finite(v('battery')) !== null && v('battery') < options.battery) out.push(`12V battery ${Math.round(v('battery'))}%`);
+  else if (enabled.battery && typeof health === 'string' && /LOW|WEAK|BAD|CRITICAL|REPLACE/i.test(health)) out.push('12V battery ' + health.toLowerCase().replace(/_/g, ' '));
   const rs = v('remoteStart');
-  if (rs && rs.until > now()) out.push('Engine running (remote start)');
+  if (enabled.engine && rs && rs.until > now()) out.push('Engine running (remote start)');
   return out;
 }
 
@@ -1120,7 +1127,7 @@ class WidgetRenderer {
       for (const pair of [['fl', 'fr'], ['rl', 'rr']]) {
         const row = w.addStack();
         for (const k of pair) {
-          const v = finite(this.value(k)), flag = v !== null && v < SETTINGS.lowTire ? ' !' : '';
+          const v = finite(this.value(k)), flag = v !== null && v < alertSettings(this.prefs).tire && alertSettings(this.prefs).enabled.tires ? ' !' : '';
           tiny(row, `${k.toUpperCase()} ${this.tire(k)}${flag}`, 13, !!flag); row.addSpacer();
         }
       }
@@ -1158,6 +1165,10 @@ class WidgetRenderer {
     w.refreshAfterDate = new Date(this.nextRefresh());
     return w;
   }
+  footer(notice) {
+    const issues = alertSettings(this.prefs).attention ? nightProblems(this.fields, this.prefs) : [];
+    return issues.length ? `⚠ ${issues[0]}${issues.length > 1 ? ` +${issues.length - 1}` : ''} · ${age(this.oldest())}` : (notice || `Updated ${age(this.oldest())}`);
+  }
   buildSmall(notice) {
     const w = this.frame([12, 12, 10, 12]);
     const top = w.addStack(); top.centerAlignContent(); top.spacing = 6;
@@ -1171,7 +1182,7 @@ class WidgetRenderer {
     w.addSpacer(4);
     if (!this.runningBadge(w, 11)) this.lockPill(w);
     w.addSpacer();
-    this.text(w, notice || `Updated ${age(this.oldest())}`, 9, false, this.muted);
+    this.text(w, this.footer(notice), 9, false, this.muted);
     return w;
   }
   // Alternative layouts use only cached readings and the same action handlers as Classic.
@@ -1228,7 +1239,7 @@ class WidgetRenderer {
     w.addSpacer();
     const known = Object.values(this.fields).some(f => f && f.value !== null && f.value !== undefined);
     const state = notice || (!known ? 'Open Scriptable to set up / fetch' : this.cache.notice ? 'Cached · source unavailable' : '');
-    this.text(w, `Updated ${age(this.oldest())}${state ? ' · ' + state : ''}`, 9, false, this.muted);
+    this.text(w, this.footer(state ? `Updated ${age(this.oldest())} · ${state}` : ''), 9, false, this.muted);
     return w;
   }
   build(family = 'medium', notice = '') {
@@ -1268,7 +1279,7 @@ class WidgetRenderer {
     w.addSpacer();
     const known = Object.values(this.fields).filter(f => f && f.value !== null && f.value !== undefined);
     const status = notice || (!known.length ? 'Open Scriptable to set up / fetch' : this.cache.notice ? 'Cached · source unavailable' : '');
-    this.text(w, `Last updated: ${age(this.oldest())}${status ? ' · ' + status : ''}`, 9, false, status ? this.ink : this.muted);
+    this.text(w, this.footer(`Last updated: ${age(this.oldest())}${status ? ' · ' + status : ''}`), 9, false, status ? this.ink : this.muted);
     return w;
   }
 }
@@ -1405,11 +1416,11 @@ class AppController {
       c.nextFetch = 0; this.store.write(c);
       c = (await new FordAPIClient(this.auth, this.store, prefs).getVehicleStatus()).cache;
       if (!c.fetchedAt || c.fetchedAt < now() - 5 * 60000) return c;
-      const problems = nightProblems(c.fields);
+      const problems = nightProblems(c.fields, prefs);
       c.night = Object.assign({}, c.night, { done: true, at: now(), problems }); this.store.write(c);
       if (problems.length || night.notifyOk) {
         const note = new Notification(); note.title = `${prefs.name || 'Ford'} · evening check`;
-        note.body = problems.length ? problems.join(' · ') : 'Locked, closed and all readings normal.';
+        note.body = problems.length ? problems.join(' · ') + ' · Check reading ages in FordWidget.' : 'No enabled alerts found in the latest reported readings.';
         note.openURL = new WidgetRenderer(prefs, c).url();
         try { await note.schedule(); } catch (_) { /* the widget still shows the result */ }
       }
@@ -1449,7 +1460,7 @@ class AppController {
   }
   async chooseDesign(prefs) {
     const sizes = ['small', 'medium', 'large'], designs = ['classic', 'showcase', 'dashboard'];
-    const sizePicker = new Alert(); sizePicker.title = 'Choose widget size';
+    const sizePicker = new Alert(); sizePicker.title = 'Widget gallery · choose size';
     sizes.forEach(s => sizePicker.addAction(s[0].toUpperCase() + s.slice(1)));
     sizePicker.addCancelAction('Cancel');
     const selected = await sizePicker.presentSheet(); if (selected < 0) return;
@@ -1457,7 +1468,7 @@ class AppController {
     for (;;) {
       const cfg = prefs.widget || {}, saved = Object.assign({ small: 'classic', medium: 'classic', large: 'classic' }, cfg.design || {});
       const picker = new Alert(); picker.title = `${family[0].toUpperCase() + family.slice(1)} design`;
-      picker.message = 'Choose a design to preview it. Tap Close on the preview, then tap Use design to save it.';
+      picker.message = 'Classic: balanced status. Showcase: vehicle and controls. Dashboard: detailed readings. Tap a design to preview it, then Close and Use design.';
       designs.forEach(d => picker.addAction(`${saved[family] === d ? '✓ ' : ''}${d[0].toUpperCase() + d.slice(1)}`));
       picker.addCancelAction('Done'); const choice = await picker.presentSheet(); if (choice < 0) return;
       const design = designs[choice], previewPrefs = Object.assign({}, prefs, { widget: Object.assign({}, cfg, { design: Object.assign({}, saved, { [family]: design }) }) });
@@ -1468,6 +1479,32 @@ class AppController {
       const confirm = new Alert(); confirm.title = `Use ${design}?`; confirm.message = `Apply this design to ${family} widgets. You can change it again later.`;
       confirm.addAction('Use design'); confirm.addCancelAction('Keep current');
       if (await confirm.presentAlert() === 0) { prefs.widget = previewPrefs.widget; secretSet('vehicle', prefs); return; }
+    }
+  }
+  async alertOptions(prefs) {
+    const names = { lock: 'Unlocked', doors: 'Door / hood / tailgate open', tires: 'Low tire pressure', fuel: 'Low fuel', oil: 'Low oil life', battery: 'Low 12V battery', engine: 'Remote start running' };
+    for (;;) {
+      const settings = alertSettings(prefs), keys = Object.keys(names);
+      const a = new Alert(); a.title = 'Alerts & attention';
+      a.message = 'Evening notifications use these conditions. Attention shows the first matching cached reading on widgets with its age. Missing readings are not treated as healthy. iOS controls refresh timing.';
+      keys.forEach(k => a.addAction(`${settings.enabled[k] ? '✓' : '○'} ${names[k]}`));
+      a.addAction(`Tire threshold: below ${settings.tire} psi`);
+      a.addAction(`Fuel threshold: below ${settings.fuel}%`);
+      a.addAction(`Oil threshold: at or below ${settings.oil}%`);
+      a.addAction(`Battery threshold: below ${settings.battery}%`);
+      a.addAction(`Widget attention: ${settings.attention ? 'On' : 'Off'}`);
+      a.addCancelAction('Done'); const i = await a.presentSheet(); if (i < 0) return;
+      const next = Object.assign({}, prefs.alerts || {});
+      if (i < keys.length) next.enabled = Object.assign({}, settings.enabled, { [keys[i]]: !settings.enabled[keys[i]] });
+      else if (i < keys.length + 4) {
+        const key = ['tire', 'fuel', 'oil', 'battery'][i - keys.length], max = 100;
+        const values = await input('Alert threshold', `Enter a number from 0 to ${max}${key === 'tire' ? ' psi' : '%'}.`, [{ label: key, value: String(settings[key]) }]);
+        if (!values) continue;
+        const n = finite(values[0]);
+        if (n === null || n < 0 || n > max) { await message('Invalid threshold', `Enter a number from 0 to ${max}.`); continue; }
+        next[key] = n;
+      } else next.attention = !settings.attention;
+      prefs.alerts = next; secretSet('vehicle', prefs);
     }
   }
   async customize(prefs) {
@@ -1585,7 +1622,8 @@ class AppController {
         ['View details', () => this.details(prefs)],
         ['Parked location', () => this.parked(prefs)],
         ['Customize widgets', () => this.customize(prefs)],
-        ['Choose widget design', () => this.chooseDesign(prefs)],
+        ['Widget gallery', () => this.chooseDesign(prefs)],
+        ['Alerts & attention', () => this.alertOptions(prefs)],
         ['Vehicle photo', () => this.truckPhoto(prefs)],
         ['Connect FordPass', () => this.auth.connectMobile()],
         ['Connect FordConnect', () => this.auth.connectOfficial()],
@@ -1639,6 +1677,9 @@ function selfTest() {
   const probs = nightProblems({ lock: { value: 'Unlocked' }, rr: { value: 26 }, fl: { value: 35 }, fuel: { value: 9 } });
   assert(probs.length === 3 && probs[0] === 'Unlocked' && /RR 26 psi/.test(probs[1]), 'evening problems');
   assert(nightProblems({ lock: { value: 'Locked' }, fl: { value: 35 } }).length === 0, 'evening all good');
+  assert(nightProblems({ fuel: { value: 20 } }, { alerts: { fuel: 25 } }).length === 1, 'custom fuel threshold');
+  assert(nightProblems({ fuel: { value: 5 } }, { alerts: { enabled: { fuel: false } } }).length === 0, 'disabled fuel alert');
+  assert(!alertSettings({}).attention && alertSettings({ alerts: { attention: true } }).attention, 'attention opt in');
   assert(widgetOptions({}, 'lock').view === 'lock' && widgetOptions({}, 'parked').view === 'parked', 'lock screen views');
   const rr = new WidgetRenderer({}, { fields: { remoteStart: { value: { until: now() + 60000 }, at: now() - 1000 } }, startRun: { at: now() - 500, until: 0 } });
   assert(rr.remote() === null, 'stop command overrides older running telemetry');

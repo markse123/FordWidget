@@ -75,7 +75,8 @@ Tap any widget to open the menu:
 | View details | Every reading with its time and source. |
 | Parked location | Open in Maps, or save the spot as **Home**. The widget then says "Parked · Home". |
 | Customize widgets | Choose what all widgets show, tire units, evening check time, and previews. |
-| Choose widget design | Preview Classic, Showcase, and Dashboard designs and select one separately for each widget size. |
+| Widget gallery | Preview Classic, Showcase, and Dashboard designs and select one separately for each widget size. |
+| Alerts & attention | Choose evening alert conditions, thresholds and the optional Home Screen attention indicator. |
 | Vehicle photo | Ford's photo from another angle, your own photo, or a plain icon. |
 | Sign out of Ford | Removes the saved Ford tokens and username from this phone. |
 | Run self-test | Offline checks. No network and no commands. |
@@ -86,7 +87,7 @@ Widget buttons (Lock, Unlock, Start, Refresh) open Scriptable and ask for confir
 
 ### Customizing
 
-**Choose widget design** previews each design using your cached data before saving a choice for small, medium, or large widgets. Classic remains the default. You can also use `classic`, `showcase`, or `dashboard` in an individual widget’s Parameter to override its design.
+**Widget gallery** previews each design using your cached data before saving a choice for small, medium, or large widgets. Classic remains the default. You can also use `classic`, `showcase`, or `dashboard` in an individual widget’s Parameter to override its design.
 
 **Customize widgets** in the menu sets the defaults for every widget. To change a single widget, type words in its **Parameter**:
 
@@ -101,6 +102,10 @@ Widget buttons (Lock, Unlock, Start, Refresh) open Scriptable and ask for confir
 Items: `photo`, `fuel`, `battery`, `tires`, `oil`, `lock`, `odometer`, `doors`, `temp`, `parked`.
 
 Examples: `buttons -photo` · `fuel tires` · `lock oil odometer`
+
+### Alerts and attention
+
+Use **Alerts & attention** in the menu to turn individual conditions on or off and adjust tire, fuel, oil and 12V battery thresholds. These settings apply to the evening check. The optional Home Screen attention indicator shows the first matching condition and the age of cached readings, without an extra network request. Missing readings are unknown; a warning can be stale. Lock Screen widgets do not show this indicator. iOS controls widget refresh and notification timing.
 
 ### Evening check
 
