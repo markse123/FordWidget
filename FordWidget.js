@@ -1,9 +1,60 @@
 // Variables used by Scriptable.
 // icon-color: blue; icon-glyph: truck;
+/*
+FordWidget Pro Power Preview 0.1.6
+Derived from rushilpunu/FordWidget, pinned commit 1b129eb6155fa7c0a1d14592be6983366943d31b.
+All original layouts, controls, telemetry, photos and notifications remain available.
+New optional parameters: ppoa ppob ppototal ppocapacity (alias: ppo).
+Selected Pro Power fields join the original Home Screen layout when original
+fields are also selected. Parameters naming only PPO fields keep a focused view.
+No Pro Power fields appear until selected. The Pro Power menu reads cached status
+and offers a separately confirmed, once-only status request. No outlet controls
+or continuous reporting are added. Widget rendering never sends vehicle commands.
+Troubleshooting offers redacted vehicle and Pro Power reports. A vehicle
+report uses one passive cloud read, with no command or saved telemetry changes.
+The widget Refresh button runs a confirmed full refresh: separate general-vehicle
+and Pro Power status requests with bounded result checks, plus cloud reads.
+The legacy Wake action stays available in the main menu. Existing command,
+wake and server cooldowns apply, along with the full refresh's own cooldown.
+Power is an estimate at 1 W per decoded unit, corroborated on one 7.2 kW truck.
+Other variants and enum/sentinel mappings still require validation. Every PPO
+view shows last-reported data and command age; embedded sample time is unknown.
+
+This preview uses its own Keychain prefix and cache folder, so it requires its
+own setup/sign-in when moving from upstream. Existing preview users keep the
+same script name and saved setup. Ford tokens use Scriptable's shared Keychain.
+The original North American USA sign-in profile is retained. Canada is untested.
+See README.md and docs/USAGE.md before running.
+
+Original license (also applies to this derivative preview):
+MIT License
+
+Copyright (c) 2026 rushilpunu
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+*/
+
 /**
  * FordWidget — single-file Scriptable widget (North American FordPass profile).
  * Official source and instructions: https://github.com/rushilpunu/FordWidget
- * Only install it from there, and read it first (see SECURITY & PRIVACY).
+ * This preview derives from that source. Read the preview notes above and SECURITY & PRIVACY.
  * MIT License, Copyright (c) 2026 rushilpunu. See LICENSE in the repository.
  *
  * SETUP
@@ -31,7 +82,7 @@
  *      scriptable:///run?scriptName=FordWidget&action=lock
  *      scriptable:///run?scriptName=FordWidget&action=unlock
  *      scriptable:///run?scriptName=FordWidget&action=refresh  (wake request)
- *      scriptable:///run?scriptName=FordWidget&action=fetch    (cloud GET only)
+ *      scriptable:///run?scriptName=FordWidget&action=fetch    (cloud reads only)
  *      scriptable:///run?scriptName=FordWidget&action=selftest (offline checks)
  *
  * TRUCK PHOTO
@@ -72,7 +123,7 @@
  *   estimate (SETTINGS.startMinutes); Ford's remoteStartCountdownTimer replaces it.
  * - Lock Screen widgets: circular (Parameter fuel | lock | tires), rectangular
  *   (status | tires | parked) and inline. A running engine overrides the circle.
- * - Local FordWidget/ford_vehicle_cache.json contains normalized telemetry,
+ * - Local FordWidget Pro Power Preview/ford_vehicle_cache.json contains normalized telemetry,
  *   timestamps, cooldowns, and command receipts, never secrets. It holds the
  *   truck's parked coordinates only while "Parked location" is on (Customize).
  *   Keep the filename/directory if updating the script. Cache is device-local.
@@ -151,7 +202,7 @@ const uid = () => UUID.string().replace(/-/g, '').toLowerCase();
 const form = obj => Object.keys(obj).filter(k => obj[k] !== undefined)
   .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(obj[k])}`).join('&');
 const vinOK = v => /^[A-HJ-NPR-Z0-9]{17}$/.test(v || '');
-const secretKey = name => `FordWidget.v1.${name}`;
+const secretKey = name => `FordWidget.ProPowerPreview.v1.${name}`;
 function secretGet(name) {
   const key = secretKey(name);
   return Keychain.contains(key) ? JSON.parse(Keychain.get(key)) : null;
@@ -269,7 +320,7 @@ function challenge(verifier) {
 class LocalStore {
   constructor() {
     this.fm = FileManager.local();
-    this.dir = this.fm.joinPath(this.fm.documentsDirectory(), 'FordWidget');
+    this.dir = this.fm.joinPath(this.fm.documentsDirectory(), 'FordWidget Pro Power Preview');
     this.path = this.fm.joinPath(this.dir, 'ford_vehicle_cache.json');
     this.lockPath = this.fm.joinPath(this.dir, 'app.lock');
     this.owner = null;
@@ -421,7 +472,8 @@ class FordAuthManager {
       if (Number.isFinite(until)) delay = Math.max(delay, until - now());
     }
     if (status === 401 || status === 403 || status === 400) delay = Math.max(delay, 15 * 60000);
-    secretSet('gate.' + name, { failures, next: now() + delay });
+    secretSet('gate.' + name, { failures, next: now() + delay,
+      httpStatus: typeof status === 'number' && Number.isInteger(status) && (status === 0 || status >= 100 && status <= 599) ? status : null, failedAt: now() });
   }
   async requestImage(name, url, headers = {}) {
     this.store.assertLease(); this.gate(name);
@@ -605,7 +657,8 @@ function normalize(payload, vin, source, fetchedAt) {
     out[key] = { value, at: timestamp(entry && entry.updateTime) || timestamp(root.updateTime) || null, source, fetchedAt };
   };
   for (const [field, key, max] of [['fuel', 'fuelLevel', 100], ['oil', 'oilLifeRemaining', 100], ['battery', 'batteryStateOfCharge', 100]]) {
-    const e = m[key]; put(field, bounded(e && e.value, max), e);
+    const e = m[key]; put(field, field === 'fuel' ? fordFuelPercent(e && e.value) : bounded(e && e.value, max), e);
+    if (field === 'fuel' && out.fuel) out.fuel.rawValue = finite(e && e.value);
   }
   for (const [field, key] of [['range', 'fuelRange'], ['odometer', 'odometer']]) {
     const e = m[key], v = bounded(e && e.value, 1e8);
@@ -732,11 +785,11 @@ class FordAPIClient {
     const token = await this.auth.token('autonomic');
     return this.auth.request('telemetry.mobile', `${SETTINGS.autonomic}/telemetry/sources/fordpass/vehicles/${this.prefs.vin}`, 'GET', null, this.auth.mobileHeaders(token));
   }
-  async getVehicleStatus() {
+  async getVehicleStatus(force = false) {
     this.store.assertLease();
     let c = this.store.read();
     if (!c || c.vin !== this.prefs.vin) c = { version: 1, vin: this.prefs.vin, fields: {} };
-    if (c.nextFetch > now()) return { cache: c, note: 'Cloud reads are cooling down. Showing cached data.' };
+    if (!force && c.nextFetch > now()) return { cache: c, note: 'Cloud reads are cooling down. Showing cached data.' };
     c.nextFetch = now() + SETTINGS.fetchInterval; this.store.write(c);
     let official = {}, mobile = {}, errors = [];
     if (secretGet('token.official')) {
@@ -881,19 +934,261 @@ class FordAPIClient {
   }
 }
 
+// Portable data parser only. These exact names were reviewed by the user.
+// Units, scale factors, enum meanings and sentinel codes remain unverified.
+function parsePttbStatusV2(raw) {
+  const allowed = [
+    'DcacEngOnMsgTxtDRq', 'DcacLoFuelMsgTxtDRq', 'DcacElPwDStat',
+    'DcacOutPwDsplyMx', 'DcacHwDConfg', 'DcacOutETot',
+    'DcacOut1Pw2Dsply', 'DcacOut2Pw2Dsply', 'DcacFaltMsgTxtD2Rq',
+    'DcacEngOnMsgTxtD2Rq', 'DcacOutScndPw2Dsply', 'DcacOutScndPwDsplyMx',
+    'DcacZone2PwBStat', 'DcacZone3PwBStat', 'VehElRngeL2Dsply',
+    'RngPerChrgAvgL2Dsply', 'DcacLoFuelLimLRqMnu', 'DcacPwRsrvSetDStat'
+  ];
+  const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+  const child = (value, key) => record(value) && own(value, key) ? value[key] : undefined;
+  if (!record(raw)) return null;
+  const root = own(raw, 'vehicleStatus') ? raw.vehicleStatus : raw;
+  const command = child(child(child(root, 'states'), 'commands'), 'updatePTTBStatusCommand');
+  const oem = child(child(command, 'value'), 'oemData');
+  const encoded = child(child(oem, 'pttbStatusDataV2'), 'stringValue');
+  if (typeof encoded !== 'string' || encoded.length > 32768) return null;
+  let decoded;
+  try { decoded = JSON.parse(encoded); } catch (_) { return null; }
+  if (!record(decoded)) return null;
+
+  const rawSignals = Object.create(null);
+  const rejectedSignals = [];
+  let recognizedSignalCount = 0;
+  for (const key of allowed) {
+    if (!own(decoded, key)) continue;
+    recognizedSignalCount += 1;
+    const value = decoded[key];
+    if (typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= Number.MAX_SAFE_INTEGER) rawSignals[key] = value;
+    else rejectedSignals.push(key);
+  }
+  if (!recognizedSignalCount) return null;
+  return {
+    source: 'pttbStatusDataV2',
+    units: 'unverified raw signals; no scaling applied',
+    sentinels: 'unverified',
+    rawSignals,
+    rejectedSignals,
+    recognizedSignalCount
+  };
+}
+
+// FordWidget preview add-on. Original v1 telemetry and control routes stay intact.
+// Raw status IDs live only in this WeakMap, never in the file cache or UI text.
+const PPO_WIDGET_SEEN = new WeakMap();
+const PPO_WIDGET_STATES = new Set(('REQUESTED DELIVERY_FROM_TMC_QUEUED OEM_CLOUD_DELIVERY_IN_PROGRESS OEM_CLOUD_PROCESSING_IN_PROGRESS DELIVERY_FROM_OEM_CLOUD_QUEUED DEVICE_DELIVERY_IN_PROGRESS RECEIVED_BY_DEVICE DEVICE_COMMAND_VALIDATION_IN_PROGRESS COMMAND_IN_PROGRESS_ON_DEVICE COMMAND_FINISHED_ON_DEVICE COMMAND_SUCCEEDED_ON_DEVICE COMMAND_DELIVERY_FAILURE DEVICE_COMMAND_VALIDATION_FAILURE DEVICE_RESPONSE_PROCESSING_FAILURE COMMAND_FAILED_ON_DEVICE RETRIABLE_COMMAND_DELIVERY_FAILURE EXPIRED CANCELLED').split(' '));
+const PPO_WIDGET_SUCCESS = new Set(['COMMAND_FINISHED_ON_DEVICE', 'COMMAND_SUCCEEDED_ON_DEVICE']);
+const PPO_WIDGET_FAILURE = new Set(['COMMAND_DELIVERY_FAILURE', 'DEVICE_COMMAND_VALIDATION_FAILURE', 'DEVICE_RESPONSE_PROCESSING_FAILURE', 'COMMAND_FAILED_ON_DEVICE', 'EXPIRED', 'CANCELLED']);
+const ppoOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+const ppoRecord = o => o !== null && typeof o === 'object' && !Array.isArray(o);
+const ppoChild = (o, k) => ppoRecord(o) && ppoOwn(o, k) ? o[k] : undefined;
+function ppoRoot(raw) { return ppoRecord(raw) && ppoOwn(raw, 'vehicleStatus') ? raw.vehicleStatus : raw; }
+function ppoCommand(raw) { return ppoChild(ppoChild(ppoChild(ppoRoot(raw), 'states'), 'commands'), 'updatePTTBStatusCommand'); }
+function ppoID(id) { return typeof id === 'string' && id.length > 0 && id.length <= 256 && !/[\x00-\x20\x7f]/.test(id) ? id : null; }
+function ppoValidate(raw, vin) {
+  if (typeof vin !== 'string' || vin.length !== 17 || !vinOK(vin) || !ppoRecord(raw) || !ppoRecord(ppoRoot(raw))) throw new APIError('Pro Power: invalid vehicle or response.');
+  for (const object of [raw, ppoRoot(raw)]) for (const key of ['vin', 'VIN']) {
+    if (ppoOwn(object, key) && (typeof object[key] !== 'string' || object[key].toUpperCase() !== vin)) throw new APIError('Pro Power: response vehicle mismatch.');
+  }
+}
+function ppoAt(value, clock) {
+  let n = typeof value === 'number' ? value : typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value) ? Number(value) : NaN;
+  if (Number.isFinite(n)) n = n < 1e11 ? n * 1000 : n;
+  else if (typeof value === 'string') n = Date.parse(value);
+  return Number.isFinite(n) && n >= 946684800000 && n <= clock + 60000 ? n : null;
+}
+function ppoTime(object, clock) {
+  for (const key of ['updateTime', 'updatedAt', 'timestamp']) {
+    const at = ppoAt(ppoChild(object, key), clock);
+    if (at !== null) return at;
+  }
+  return null;
+}
+function ppoNormalize(raw, vin, fetchedAt) {
+  ppoValidate(raw, vin);
+  const parsed = parsePttbStatusV2(raw), command = ppoCommand(raw);
+  const state = ppoChild(ppoChild(command, 'value'), 'toState');
+  const event = ppoChild(ppoChild(ppoChild(ppoRoot(raw), 'events'), 'customEvents'), 'pttb-power-mode-change-event');
+  const text = ppoChild(ppoChild(ppoChild(event, 'oemData'), 'current_power_mode'), 'stringValue');
+  const mode = typeof text === 'string' ? text.trim().toUpperCase() : null;
+  return { version: 1, vin, rawSignals: parsed ? Object.assign({}, parsed.rawSignals) : {},
+    rejectedSignals: parsed ? parsed.rejectedSignals.slice() : [],
+    commandAt: parsed ? ppoTime(command, fetchedAt) : null,
+    commandState: parsed && PPO_WIDGET_STATES.has(state) ? state : null,
+    latestMode: { value: ['OFF', 'LOW', 'HIGH'].includes(mode) ? mode : null, at: ppoTime(event, fetchedAt) },
+    fetchedAt };
+}
+function ppoMerge(previous, incoming) {
+  if (!previous || previous.version !== 1 || previous.vin !== incoming.vin) return incoming;
+  const result = Object.assign({}, previous, { fetchedAt: incoming.fetchedAt });
+  // Each raw packet is atomic. Never fill missing fields from another sample.
+  if (Object.keys(incoming.rawSignals).length &&
+      (previous.commandAt == null || (incoming.commandAt != null && incoming.commandAt >= previous.commandAt))) {
+    result.rawSignals = incoming.rawSignals; result.rejectedSignals = incoming.rejectedSignals;
+    result.commandAt = incoming.commandAt; result.commandState = incoming.commandState;
+  }
+  const oldMode = previous.latestMode || { value: null, at: null }, mode = incoming.latestMode;
+  if (mode.at != null && (oldMode.at == null || mode.at >= oldMode.at) ||
+      oldMode.at == null && mode.at == null && mode.value !== null) result.latestMode = mode;
+  return result;
+}
+function ppoView(snapshot, clock = now()) {
+  const signals = snapshot && snapshot.rawSignals || {}, raw = key =>
+    typeof signals[key] === 'number' && Number.isFinite(signals[key]) && Math.abs(signals[key]) <= Number.MAX_SAFE_INTEGER ? signals[key] : null;
+  const commandAt = snapshot && Number.isFinite(snapshot.commandAt) ? snapshot.commandAt : null;
+  const latestMode = snapshot && snapshot.latestMode || { value: null, at: null };
+  const seconds = commandAt === null ? null : Math.max(0, Math.floor((clock - commandAt) / 1000));
+  const staleReasons = [];
+  if (commandAt === null) staleReasons.push('unknown_command_time');
+  else if (commandAt > clock) staleReasons.push('future_command_time');
+  else if (clock - commandAt > 120000) staleReasons.push('command_older_than_two_minutes');
+  if (commandAt !== null && latestMode.value === 'OFF' && latestMode.at > commandAt) staleReasons.push('newer_off_mode');
+  const ageText = seconds === null ? 'unknown command age' : seconds < 60 ? seconds + 's' :
+    Math.floor(seconds / 60) + 'm ' + seconds % 60 + 's';
+  return { rawA: raw('DcacOut1Pw2Dsply'), rawB: raw('DcacOut2Pw2Dsply'), rawCapacity: raw('DcacOutPwDsplyMx'),
+    rawSecondary: raw('DcacOutScndPw2Dsply'), rawSecondaryCapacity: raw('DcacOutScndPwDsplyMx'),
+    commandAt, commandState: snapshot && snapshot.commandState || null, ageSeconds: seconds, ageText,
+    latestMode, fetchedAt: snapshot && snapshot.fetchedAt || null, stale: staleReasons.length > 0, staleReasons,
+    units: 'unverified raw signals; no scaling applied', sampleFreshness: 'unverified' };
+}
+function ppoVIN(client) {
+  requireApp(); client.store.assertLease();
+  const vin = client.prefs && client.prefs.vin;
+  if (typeof vin !== 'string' || vin.length !== 17 || !vinOK(vin)) throw new APIError('Pro Power: configure your vehicle first.');
+  return vin;
+}
+function ppoCache(client, vin, rejectMismatch = false) {
+  const cache = client.store.read();
+  if (cache && cache.vin !== vin && rejectMismatch) throw new APIError('Pro Power: cache vehicle mismatch.');
+  return cache && cache.vin === vin ? cache : { version: 1, vin, fields: {} };
+}
+function ppoRemember(client, raw, vin) {
+  let seen = PPO_WIDGET_SEEN.get(client);
+  if (!seen || seen.vin !== vin) { seen = { vin, ids: new Set() }; PPO_WIDGET_SEEN.set(client, seen); }
+  const id = ppoID(ppoChild(ppoCommand(raw), 'commandId'));
+  if (id) { seen.ids.add(id); if (seen.ids.size > 32) seen.ids.delete(seen.ids.values().next().value); }
+}
+function ppoSave(client, raw, vin) {
+  if (ppoVIN(client) !== vin) throw new APIError('Pro Power: configured vehicle changed.');
+  const cache = ppoCache(client, vin);
+  cache.proPower = ppoMerge(cache.proPower, ppoNormalize(raw, vin, now()));
+  client.store.write(cache); return cache;
+}
+async function ppoQuery(client, vin, token, deadline = null) {
+  if (ppoVIN(client) !== vin) throw new APIError('Pro Power: configured vehicle changed.');
+  const before = client.auth.timeout;
+  if (deadline !== null) {
+    const remaining = deadline - now();
+    if (remaining <= 0) throw new APIError('Pro Power: read window ended.');
+    client.auth.timeout = Math.min(before || SETTINGS.timeout, remaining / 1000);
+  }
+  try {
+    const raw = await client.auth.request('telemetry.proPower',
+      'https://api.autonomic.ai/v1beta/telemetry/sources/fordpass/vehicles/' + vin + ':query',
+      'POST', {}, client.auth.mobileHeaders(token));
+    if (ppoVIN(client) !== vin) throw new APIError('Pro Power: configured vehicle changed.');
+    if (deadline !== null && now() > deadline) throw new APIError('Pro Power: read window ended.');
+    ppoValidate(raw, vin); ppoRemember(client, raw, vin); return raw;
+  } finally { client.auth.timeout = before; }
+}
+function ppoRequestResult(client, vin, attemptAt, outcome, message) {
+  // The pre-dispatch cooldown survives even if a later lease takeover prevents
+  // this outcome update. Never write through another run's lease.
+  try {
+    if (ppoVIN(client) === vin) { const cache = ppoCache(client, vin, true);
+      cache.proPowerRequest = { attemptAt, outcome }; client.store.write(cache); }
+  } catch (_) { /* Return the safe outcome without mutating a lost session. */ }
+  return { outcome, message };
+}
+Object.assign(FordAPIClient.prototype, {
+  async proPowerSnapshot() {
+    const vin = ppoVIN(this), token = await this.auth.token('autonomic');
+    return ppoQuery(this, vin, token);
+  },
+  async readProPower(force = false) {
+    const vin = ppoVIN(this); let cache = ppoCache(this, vin);
+    if (!force && cache.proPowerReadAfter > now()) return { cache, snapshot: cache.proPower || null, note: 'Pro Power cloud reads are cooling down; showing cached data.' };
+    cache.proPowerReadAfter = now() + 300000; this.store.write(cache);
+    try {
+      cache = ppoSave(this, await this.proPowerSnapshot(), vin);
+      return { cache, snapshot: cache.proPower, note: 'Pro Power cloud cache checked. Embedded sample freshness is unverified.' };
+    } catch (_) {
+      cache = ppoCache(this, vin);
+      return { cache, snapshot: cache.proPower || null, note: 'Pro Power cloud read failed or is cooling down; showing cached data.' };
+    }
+  },
+  async requestProPowerStatus(confirmed = false) {
+    requireApp();
+    if (confirmed !== true) throw new APIError('Confirm the Pro Power status request in the app first.');
+    const vin = ppoVIN(this);
+    const checkCooldown = () => {
+      this.store.assertLease(); this.auth.gate('commands'); this.auth.gate('commands.proPower');
+      const cache = ppoCache(this, vin, true);
+      if (cache.commandAfter > now() || cache.proPowerRequestAfter > now()) throw new APIError('A vehicle request was just sent. Wait before requesting Pro Power status again.');
+      return cache;
+    };
+    checkCooldown();
+    const token = await this.auth.token('autonomic');
+    checkCooldown();
+    // A mandatory read-only baseline prevents a cached command receipt from
+    // being mistaken for completion of this new request.
+    let baseline;
+    try { baseline = await ppoQuery(this, vin, token); ppoSave(this, baseline, vin); }
+    catch (_) { throw new APIError('Pro Power baseline could not be read. No vehicle status request was sent.'); }
+    const seen = PPO_WIDGET_SEEN.get(this), historical = new Set(seen ? seen.ids : []);
+    const cache = checkCooldown(), attemptAt = now();
+    cache.commandAfter = attemptAt + SETTINGS.commandInterval;
+    cache.proPowerRequestAfter = attemptAt + 60000;
+    cache.proPowerRequest = { attemptAt, outcome: 'dispatching' }; this.store.write(cache);
+    let receipt;
+    try {
+      receipt = await this.auth.request('commands.proPower',
+        'https://api.autonomic.ai/v1beta/command/vehicles/' + vin + '/commands', 'POST',
+        { type: 'updatePTTBStatusCommand', version: '1.0.0', wakeUp: true, properties: {} }, this.auth.mobileHeaders(token));
+      if (ppoVIN(this) !== vin) throw new APIError('Pro Power: configured vehicle changed.');
+    } catch (_) {
+      return ppoRequestResult(this, vin, attemptAt, 'delivery_uncertain', 'Pro Power request delivery is uncertain. It was not retried. The last cached report was kept; wait before trying again.');
+    }
+    const id = ppoID(ppoChild(receipt, 'id'));
+    if (!id || historical.has(id)) return ppoRequestResult(this, vin, attemptAt, 'accepted_unconfirmed', 'Ford accepted the request, but a new usable receipt was not returned. Device completion is unconfirmed.');
+    const deadline = now() + 30000;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      if (attempt) await new Promise(resolve => Timer.schedule(Math.min(5000, Math.max(0, deadline - now())), false, resolve));
+      if (now() >= deadline) break;
+      let raw;
+      try { raw = await ppoQuery(this, vin, token, deadline); ppoSave(this, raw, vin); }
+      catch (_) { break; } // No further query after a transport, backoff or lease error.
+      const command = ppoCommand(raw), state = ppoChild(ppoChild(command, 'value'), 'toState');
+      if (ppoChild(command, 'commandId') !== id) continue;
+      if (PPO_WIDGET_SUCCESS.has(state)) return ppoRequestResult(this, vin, attemptAt, 'device_succeeded', 'Ford reports this Pro Power status request succeeded on the device. Cached readings still need their own freshness check.');
+      if (PPO_WIDGET_FAILURE.has(state)) return ppoRequestResult(this, vin, attemptAt, 'device_failed', 'Ford reports this Pro Power status request failed, expired or was canceled. It was not retried.');
+    }
+    return ppoRequestResult(this, vin, attemptAt, 'accepted_unconfirmed', 'Ford accepted the Pro Power status request; device completion was not confirmed in the read window. It was not retried.');
+  }
+});
+
+
 // Display options: app-wide defaults from Customize widgets, overridable per widget
 // through its Parameter, e.g. "controls", "fuel tires lock", "-photo", "bar".
 const METRICS = Object.freeze({ photo: 'Truck photo', fuel: 'Fuel & range', battery: '12V battery', tires: 'Tire pressures',
   oil: 'Oil life', lock: 'Lock state', odometer: 'Odometer', doors: 'Doors', temp: 'Outside temperature',
-  parked: 'Parked location' });
+  parked: 'Parked location', ppoa: 'Pro Power A (estimated)', ppob: 'Pro Power B (estimated)',
+  ppototal: 'Pro Power total (estimated)', ppocapacity: 'Pro Power capacity (estimated)' });
 const METRIC_ALIASES = Object.freeze({ picture: 'photo', image: 'photo', truck: 'photo', range: 'fuel', '12v': 'battery',
   tire: 'tires', tpms: 'tires', psi: null, locks: 'lock', odo: 'odometer', miles: 'odometer', door: 'doors',
-  weather: 'temp', temperature: 'temp', location: 'parked', gps: 'parked', map: 'parked' });
+  weather: 'temp', temperature: 'temp', location: 'parked', gps: 'parked', map: 'parked',
+  ppo: 'ppototal', propower: 'ppototal', generator: 'ppototal' });
 // Lock Screen widgets show one view each, picked by the first view word in Parameter.
-const ACCESSORY_VIEWS = ['fuel', 'lock', 'tires', 'parked', 'status'];
+const ACCESSORY_VIEWS = ['fuel', 'lock', 'tires', 'parked', 'status', 'ppoa', 'ppob', 'ppototal', 'ppocapacity'];
 function widgetOptions(prefs, parameter) {
   const base = (prefs && prefs.widget) || {};
-  const show = Object.assign(Object.fromEntries(Object.keys(METRICS).map(k => [k, true])), base.show || {});
+  const show = Object.assign(Object.fromEntries(Object.keys(METRICS).map(k => [k, !k.startsWith('ppo')])), base.show || {});
   const opts = { layout: { medium: base.medium || 'status', large: 'controls' }, unit: base.unit === 'bar' ? 'bar' : 'psi', vin: null, view: null };
   const only = [];
   for (const raw of String(parameter || '').toLowerCase().split(/[\s,;]+/).filter(Boolean)) {
@@ -1041,7 +1336,7 @@ class WidgetRenderer {
   }
   buttons(stack, cols, w, h) {
     const actions = [['lock', 'Lock', 'lock.fill'], ['unlock', 'Unlock', 'lock.open.fill'],
-      this.remote() ? ['stop', 'Stop', 'stop.circle.fill'] : ['start', 'Start', 'power'], ['refresh', 'Refresh', 'arrow.clockwise']];
+      this.remote() ? ['stop', 'Stop', 'stop.circle.fill'] : ['start', 'Start', 'power'], ['refreshwidget', 'Refresh', 'arrow.clockwise']];
     const grid = stack.addStack(); grid.layoutVertically(); grid.spacing = 6;
     for (let i = 0; i < actions.length; i += cols) {
       const row = grid.addStack(); row.spacing = 6;
@@ -1205,6 +1500,7 @@ class WidgetRenderer {
       }
       if (large && controls) { w.addSpacer(8); this.buttons(w, 4, 70, 46); }
     }
+    if (typeof this._ppoBeforeFooter === 'function') this._ppoBeforeFooter(w);
     w.addSpacer();
     const known = Object.values(this.fields).filter(f => f && f.value !== null && f.value !== undefined);
     const status = notice || (!known.length ? 'Open Scriptable to set up / fetch' : this.cache.notice ? 'Cached · source unavailable' : '');
@@ -1391,6 +1687,13 @@ class AppController {
     if (action === 'parked') { await this.parked(prefs); return; }
     if (action === 'fetch') {
       const result = await api.getVehicleStatus();
+      if (secretGet('token.mobile')) {
+        try {
+          const power = await api.readProPower();
+          result.note += '\nPro Power: ' + power.note;
+          result.cache = power.cache;
+        } catch (_) { result.note += '\nPro Power could not be read. Existing telemetry was retained.'; }
+      }
       await api.updatePlace();
       if ((prefs.imageMode || 'auto') === 'auto' && secretGet('token.mobile')) {
         try { const source = await api.updateVehicleImage(false); if (source) result.note += `\nTruck photo downloaded from ${source}.`; }
@@ -1436,7 +1739,7 @@ class AppController {
       if (!prefs) return;
       const action = args.queryParameters.action;
       if (action) { await this.action(action, prefs); return; }
-      const menu = new Alert(); menu.title = prefs.name; menu.message = 'Telemetry reads do not wake the truck. Refresh sends an explicit wake request.';
+      const menu = new Alert(); menu.title = prefs.name + ' · ' + FORDWIDGET_PREVIEW_VERSION; menu.message = 'Telemetry reads do not wake the truck. Refresh sends an explicit wake request.';
       const items = [
         ['Fetch telemetry', () => this.action('fetch', prefs)],
         ['Lock', () => this.action('lock', prefs)],
@@ -1445,6 +1748,8 @@ class AppController {
         ['Remote stop', () => this.action('stop', prefs)],
         ['Wake / refresh', () => this.action('refresh', prefs)],
         ['View details', () => this.details(prefs)],
+        ['Troubleshooting', () => this.troubleshooting(prefs)],
+        ['Pro Power', () => this.action('propower', prefs)],
         ['Parked location', () => this.parked(prefs)],
         ['Customize widgets', () => this.customize(prefs)],
         ['Truck photo', () => this.truckPhoto(prefs)],
@@ -1462,7 +1767,1113 @@ class AppController {
   }
 }
 
+// Ford can report fuel above 100%; cap the percentage and retain raw data separately.
+// Negative values remain unknown rather than treating a possible sentinel as empty.
+function fordFuelPercent(value) {
+  const raw = finite(value);
+  if (raw === null || raw < 0) return null;
+  return Math.min(raw, 100);
+}
+
+// Optional Pro Power views. All original views and actions retain their handlers.
+const PPO_UI_METRICS = Object.freeze(['ppoa', 'ppob', 'ppototal', 'ppocapacity']);
+const PPO_UI_CAPACITIES = Object.freeze([2000, 2300, 2400, 6900, 7200, 9600]);
+const PPO_UI_RAW_KEYS = Object.freeze([
+  'DcacEngOnMsgTxtDRq', 'DcacLoFuelMsgTxtDRq', 'DcacElPwDStat',
+  'DcacOutPwDsplyMx', 'DcacHwDConfg', 'DcacOutETot',
+  'DcacOut1Pw2Dsply', 'DcacOut2Pw2Dsply', 'DcacFaltMsgTxtD2Rq',
+  'DcacEngOnMsgTxtD2Rq', 'DcacOutScndPw2Dsply', 'DcacOutScndPwDsplyMx',
+  'DcacZone2PwBStat', 'DcacZone3PwBStat', 'VehElRngeL2Dsply',
+  'RngPerChrgAvgL2Dsply', 'DcacLoFuelLimLRqMnu', 'DcacPwRsrvSetDStat'
+]);
+
+// Estimates assume one watt per raw unit. Only a 7.2 kW installation has been
+// corroborated against a known load. Missing/rejected data never becomes zero.
+function ppoEstimated(snapshot) {
+  const view = ppoView(snapshot ? Object.assign({}, snapshot, { rawSignals: ppoRawSignals(snapshot) }) : null);
+  const rated = value => typeof value === 'number' && Number.isFinite(value) && PPO_UI_CAPACITIES.includes(value);
+  const usage = (value, capacity) => typeof value === 'number' && Number.isFinite(value) &&
+    capacity !== null && value >= 0 && value <= capacity ? value : null;
+  const mainCapacity = rated(view.rawCapacity) ? view.rawCapacity : null;
+  const a = usage(view.rawA, mainCapacity), b = usage(view.rawB, mainCapacity);
+  const abTotal = a !== null && b !== null && a + b <= mainCapacity ? a + b : null;
+  const secondaryCapacity = view.rawSecondaryCapacity === 0 ? 0 :
+    rated(view.rawSecondaryCapacity) ? view.rawSecondaryCapacity : null;
+  const secondary = usage(view.rawSecondary, secondaryCapacity);
+  const secondaryScopeKnown = secondaryCapacity !== null && secondary !== null;
+  // A positive secondary capacity establishes installed capacity even when its
+  // usage is missing. Overall usage still requires every participating value.
+  const capacity = mainCapacity === null ? null : secondaryCapacity !== null ? mainCapacity + secondaryCapacity : mainCapacity;
+  const total = abTotal !== null && secondaryScopeKnown ? abTotal + secondary : null;
+  return { a, b, abTotal, total, capacity, mainCapacity, secondary, secondaryCapacity,
+    capacityScope: secondaryCapacity === null ? 'A+B capacity' : secondaryCapacity > 0 ? 'Combined capacity' : 'Capacity',
+    secondaryScopeKnown, estimated: true, unitAssumption: '1 raw unit = 1 W; corroborated only on 7.2 kW' };
+}
+function ppoPowerText(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return '—';
+  if (value >= 1000) return '~' + (value / 1000).toFixed(2).replace(/\.?0+$/, '') + ' kW';
+  return '~' + String(Math.round(value * 10) / 10) + ' W';
+}
+function ppoModeLine(view) {
+  const mode = view && view.latestMode;
+  const value = mode && ['OFF', 'LOW', 'HIGH'].includes(mode.value) ? mode.value : null;
+  return value ? 'Ford ' + value + ' · ' + age(ppoUIAt(mode.at)) : 'Ford mode unknown';
+}
+function ppoUIAt(at) { return typeof at === 'number' && Number.isFinite(at) && at > 0 && at <= now() ? at : null; }
+function ppoCommandAge(view) { return age(ppoUIAt(view.commandAt)); }
+function ppoShortAge(at) {
+  if (typeof at !== 'number' || !Number.isFinite(at) || at <= 0 || at > now()) return '?';
+  const seconds = Math.floor((now() - at) / 1000), minutes = Math.floor(seconds / 60), hours = Math.floor(minutes / 60);
+  return seconds < 60 ? seconds + 's' : minutes < 60 ? minutes + 'm' : hours < 48 ? hours + 'h' : Math.floor(hours / 24) + 'd';
+}
+function ppoShortMode(view) {
+  const mode = view && view.latestMode;
+  return mode && ['OFF', 'LOW', 'HIGH'].includes(mode.value) ? mode.value + ppoShortAge(mode.at) : 'mode?';
+}
+function ppoStaleText(view) {
+  const reasons = [];
+  for (const reason of view.staleReasons || []) {
+    if (reason === 'unknown_command_time') reasons.push('Command result time is unknown.');
+    if (reason === 'command_older_than_two_minutes') reasons.push(view.commandAt > now() ? 'The command result time is ahead of the phone clock.' : 'The command report is older than two minutes.');
+    if (reason === 'newer_off_mode') reasons.push('Ford reported OFF after this load report; the earlier readings are retained.');
+  }
+  return reasons.join(' ');
+}
+function ppoSelected(renderer) {
+  const show = renderer.opts && renderer.opts.show || {};
+  return PPO_UI_METRICS.filter(key => show[key] === true);
+}
+function ppoEntries(estimated, selected) {
+  const items = {
+    ppoa: ['A', estimated.a], ppob: ['B', estimated.b],
+    ppototal: ['Total', estimated.total], ppocapacity: [estimated.capacityScope, estimated.capacity]
+  };
+  return selected.map(key => ({ key, label: items[key][0], value: items[key][1] }));
+}
+function ppoSnapshotFor(cache, prefs) {
+  if (!cache || !prefs || cache.vin !== prefs.vin) return null;
+  const snapshot = cache.proPower;
+  return snapshot && (!snapshot.vin || snapshot.vin === prefs.vin) ? snapshot : null;
+}
+function ppoRawSignals(snapshot) {
+  const input = snapshot && snapshot.rawSignals || {}, result = Object.create(null);
+  for (const key of PPO_UI_RAW_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(input, key)) continue;
+    const value = input[key];
+    if (typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= Number.MAX_SAFE_INTEGER) result[key] = value;
+  }
+  return result;
+}
+function ppoStatusRequestView(request) {
+  const outcomes = ['dispatching', 'device_succeeded', 'device_failed', 'accepted_unconfirmed', 'delivery_uncertain'];
+  if (!request || !outcomes.includes(request.outcome)) return null;
+  const at = ppoUIAt(request.attemptAt);
+  return { outcome: request.outcome, attemptAgeSeconds: at === null ? null : Math.floor((now() - at) / 1000) };
+}
+function ppoRequestLine(request) {
+  const safe = ppoStatusRequestView(request);
+  if (!safe) return 'Last status request: not recorded.';
+  const labels = { dispatching: 'dispatch started; outcome unknown', device_succeeded: 'Ford reported device success',
+    device_failed: 'Ford reported failure, expiration or cancellation', accepted_unconfirmed: 'accepted; device completion unconfirmed',
+    delivery_uncertain: 'delivery uncertain; no automatic retry' };
+  return 'Last status request: ' + labels[safe.outcome] + ' · attempt ' + age(ppoUIAt(request.attemptAt));
+}
+function ppoRedactedReport(snapshot, request = null) {
+  const view = ppoView(snapshot), estimates = ppoEstimated(snapshot);
+  const mode = view.latestMode || {};
+  const modeAt = ppoUIAt(mode.at), commandAt = ppoUIAt(view.commandAt);
+  return {
+    tool: 'FordWidget Pro Power preview', reportVersion: 1, rawSignalSchemaVersion: 1,
+    source: 'pttbStatusDataV2', sourceCommandAgeSeconds: commandAt === null ? null : Math.floor((now() - commandAt) / 1000),
+    sourceCommandState: PPO_WIDGET_STATES.has(view.commandState) ? view.commandState : null,
+    embeddedSampleAgeSeconds: null, embeddedSampleFreshness: 'unverified',
+    latestFordMode: { value: ['OFF', 'LOW', 'HIGH'].includes(mode.value) ? mode.value : null,
+      ageSeconds: modeAt === null ? null : Math.floor((now() - modeAt) / 1000) },
+    lastStatusRequest: ppoStatusRequestView(request), rawSignals: ppoRawSignals(snapshot), estimates,
+    interpretation: 'Estimated watts assume 1 raw unit = 1 W, corroborated only on a 7.2 kW truck. Command time does not establish sample time.'
+  };
+}
+
+const PPO_UI_ORIGINAL_METRICS = Object.freeze([
+  'photo', 'fuel', 'battery', 'tires', 'oil', 'lock', 'odometer', 'doors', 'temp', 'parked'
+]);
+function ppoHasOriginalSelection(renderer) {
+  const show = renderer.opts && renderer.opts.show || {};
+  return PPO_UI_ORIGINAL_METRICS.some(key => show[key] === true);
+}
+function ppoAdditiveSummary(renderer, widget, family, selected, originalText) {
+  const snapshot = ppoSnapshotFor(renderer.cache, renderer.prefs), view = ppoView(snapshot);
+  const entries = ppoEntries(ppoEstimated(snapshot), selected);
+  const small = family === 'small', large = family === 'large' || family === 'extraLarge';
+  const section = widget.addStack(); section.layoutVertically(); section.spacing = 1;
+  section.setPadding(large ? 0 : 3, 0, 1, 0); section.url = renderer.url('propower');
+  const text = (content, size, bold = false, color = renderer.muted) => originalText.call(renderer, section, content, size, bold, color);
+  const freshness = 'cmd' + ppoShortAge(view.commandAt) + ' · ' + ppoShortMode(view);
+  if (large) {
+    text('Pro Power · last reported · est.', 9, true);
+    text(freshness + ' · sample time unknown', 8);
+  } else text(small ? 'PPO last est. · sample time unknown' :
+    'PPO last est. · ' + freshness + ' · sample time unknown', small ? 6.5 : 7, true);
+  // Keep small-widget freshness separate so reading pairs remain legible.
+  if (small) text(freshness, 7);
+  // Two readings per line keep every selected field visible at all Home sizes.
+  for (let i = 0; i < entries.length; i += 2) {
+    const readings = entries.slice(i, i + 2).map(item => {
+      const label = item.key === 'ppocapacity' ? item.label === 'A+B capacity' ? 'AB cap' : 'Cap' : item.label;
+      return label + ' ' + ppoPowerText(item.value).replace(/\s/g, '');
+    }).join(' · ');
+    text(readings, small ? 8 : large ? 14 : 9, true, large ? renderer.ink : renderer.muted);
+  }
+}
+function ppoBuildAdditive(renderer, family, notice, selected) {
+  const small = family === 'small', large = family === 'large' || family === 'extraLarge';
+  const names = ['frame', 'text', 'truck', 'pill', 'buttons', 'tires', '_ppoBeforeFooter'];
+  const descriptors = Object.create(null), saved = Object.create(null);
+  for (const name of names) { descriptors[name] = Object.getOwnPropertyDescriptor(renderer, name); saved[name] = renderer[name]; }
+  let widget = null, inserted = false;
+  try {
+    // Compact the existing layout instead of replacing or filtering its content.
+    // All overrides are instance-local and restored even if rendering throws.
+    renderer.frame = function(padding) {
+      widget = saved.frame.call(this, large ? [8, 12, 7, 12] : small ? [8, 10, 7, 10] : [6, 11, 6, 11]);
+      return widget;
+    };
+    if (large) renderer._ppoBeforeFooter = function(root) {
+      if (typeof saved._ppoBeforeFooter === 'function') saved._ppoBeforeFooter.call(this, root);
+      if (!inserted && root === widget) {
+        inserted = true;
+        root.addSpacer(6);
+        ppoAdditiveSummary(this, root, family, selected, saved.text);
+      }
+    };
+    renderer.text = function(stack, content, size = 12, bold = false, color = this.ink) {
+      // Upstream's final root text is its nine-point, non-bold timestamp/notice.
+      // Check the root and text signature, so arbitrary small-widget notices work.
+      // This also remains a fallback for bases without the before-footer hook.
+      if (!inserted && widget && stack === widget && size === 9 && bold === false) {
+        inserted = true;
+        ppoAdditiveSummary(this, widget, family, selected, saved.text);
+      }
+      return saved.text.call(this, stack, content, Math.max(7, size * (small ? 0.85 : large ? 0.9 : 0.88)), bold, color);
+    };
+    renderer.truck = function(stack, width, height) {
+      return saved.truck.call(this, stack, width, Math.max(12, height * (small ? 0.75 : large ? 0.85 : 0.7)));
+    };
+    if (large) renderer.tires = function(stack, size) {
+      // This is the original right column, which also holds extras and locks.
+      // Tighten its gaps to leave room for the larger PPO readings and timer.
+      stack.spacing = 2;
+      return saved.tires.call(this, stack, size);
+    };
+    renderer.pill = function(stack, label, symbol) {
+      const pill = saved.pill.call(this, stack, label, symbol);
+      pill.setPadding(2, 5, 2, 5); return pill;
+    };
+    renderer.buttons = function(stack, columns, width, height) {
+      const controls = stack.addStack(); controls.layoutVertically(); controls.spacing = 2;
+      saved.text.call(this, controls, 'Engine / locks / refresh', large ? 8 : 7, true, this.muted);
+      return saved.buttons.call(this, controls, columns, width, Math.min(height, large ? 40 : 34));
+    };
+    return PPO_UI_ORIGINAL_BUILD.call(renderer, family, notice);
+  } finally {
+    for (const name of names) {
+      if (descriptors[name]) Object.defineProperty(renderer, name, descriptors[name]);
+      else delete renderer[name];
+    }
+  }
+}
+
+const PPO_UI_ORIGINAL_BUILD = WidgetRenderer.prototype.build;
+WidgetRenderer.prototype.build = function(family = 'medium', notice = '') {
+  const selected = ppoSelected(this), accessory = String(family).startsWith('accessory');
+  const viewWord = this.opts && this.opts.view;
+  const accessorySelected = PPO_UI_METRICS.includes(viewWord) || viewWord === 'propower';
+  // Preserve first-view parameter semantics, including existing Lock Screen views.
+  if (!selected.length || accessory && !accessorySelected) return PPO_UI_ORIGINAL_BUILD.call(this, family, notice);
+  // Global checkboxes and mixed positive parameters add PPO to the normal view.
+  // Show-only PPO parameters still clear the original flags in widgetOptions.
+  if (!accessory && ppoHasOriginalSelection(this)) return ppoBuildAdditive(this, family, notice, selected);
+  const snapshot = ppoSnapshotFor(this.cache, this.prefs);
+  const view = ppoView(snapshot), estimates = ppoEstimated(snapshot);
+  const entries = ppoEntries(estimates, selected), cmd = 'cmd ' + ppoCommandAge(view);
+  const mode = ppoModeLine(view), header = 'Pro Power · last reported';
+  const primary = entries.find(item => item.key === viewWord) || entries.find(item => item.key === 'ppototal') || entries[0];
+
+  if (accessory) {
+    const widget = new ListWidget(); widget.url = this.url('propower'); widget.refreshAfterDate = new Date(this.nextRefresh());
+    const white = Color.white();
+    if (family === 'accessoryInline') {
+      const shortLabel = { ppoa: 'A ', ppob: 'B ', ppototal: '', ppocapacity: estimates.capacityScope === 'A+B capacity' ? 'AB cap ' : 'cap ' }[primary.key];
+      // Age and mode precede the value so truncation cannot conceal staleness.
+      const text = this.text(widget, 'PPO last · cmd' + ppoShortAge(view.commandAt) + ' · ' + ppoShortMode(view) + ' · ' + shortLabel + ppoPowerText(primary.value).replace(/\s/g, ''), 8, false, white);
+      text.minimumScaleFactor = 0.5;
+      return widget;
+    }
+    if (family === 'accessoryCircular') {
+      widget.addAccessoryWidgetBackground = true;
+      widget.addSpacer();
+      this.centered(widget, row => this.text(row, 'PPO · LAST', 8, true, white));
+      this.centered(widget, row => this.text(row, 'cmd' + ppoShortAge(view.commandAt), 7, false, white));
+      this.centered(widget, row => this.text(row, ppoShortMode(view), 6, false, white));
+      this.centered(widget, row => this.text(row, primary.label + ' est.', 7, true, white));
+      this.centered(widget, row => this.text(row, ppoPowerText(primary.value), 11, true, white));
+      widget.addSpacer();
+      return widget;
+    }
+    this.text(widget, header, 9, true, white);
+    for (let i = 0; i < entries.length; i += 2) {
+      const line = entries.slice(i, i + 2).map(item => item.label + ' ' + ppoPowerText(item.value)).join(' · ');
+      this.text(widget, 'Est. ' + line, 10, true, white);
+    }
+    this.text(widget, 'cmd' + ppoShortAge(view.commandAt) + ' · ' + ppoShortMode(view), 8, false, white);
+    return widget;
+  }
+
+  const small = family === 'small', large = family === 'large' || family === 'extraLarge';
+  const controls = !small && this.opts.layout[large ? 'large' : 'medium'] === 'controls';
+  const widget = this.frame(small ? [10, 11, 9, 11] : [10, 12, 9, 12]);
+  widget.url = this.url('propower');
+  this.text(widget, header, small ? 10 : 13, true);
+  this.text(widget, 'ESTIMATED · sample time unknown', small ? 7 : 8, false, this.muted);
+  widget.addSpacer(large ? 8 : 4);
+  const body = widget.addStack(); body.layoutHorizontally(); body.spacing = 10;
+  const values = body.addStack(); values.layoutVertically(); values.spacing = large ? 6 : 3;
+  for (const item of entries) this.text(values, item.label + '  ' + ppoPowerText(item.value), large ? 20 : small ? 12 : 13, true);
+  if (!large && controls) {
+    body.addSpacer();
+    const vehicleControls = body.addStack(); vehicleControls.layoutVertically(); vehicleControls.spacing = 2;
+    this.text(vehicleControls, 'Engine / locks / refresh', 8, true, this.muted);
+    this.buttons(vehicleControls, 2, 56, 32);
+  }
+  widget.addSpacer();
+  this.text(widget, mode, small ? 7 : large ? 11 : 8, false, this.muted);
+  this.text(widget, cmd + (view.stale ? ' · older / unverified' : ' · sample age unverified'), small ? 7 : 8, false, this.muted);
+  if (large && estimates.secondaryCapacity > 0) this.text(widget, 'Includes secondary output ' + ppoPowerText(estimates.secondary), 10, false, this.muted);
+  if (large && controls) {
+    widget.addSpacer(7);
+    this.text(widget, 'Engine / locks / refresh', 9, true, this.muted);
+    this.buttons(widget, 4, 64, 43);
+  }
+  if (notice) this.text(widget, notice, 8, false, this.muted);
+  return widget;
+};
+
+function ppoDetailsText(snapshot, request = null) {
+  const view = ppoView(snapshot), e = ppoEstimated(snapshot);
+  const lines = [
+    'Estimated A: ' + ppoPowerText(e.a), 'Estimated B: ' + ppoPowerText(e.b),
+    'Estimated total: ' + ppoPowerText(e.total), e.capacityScope + ': ' + ppoPowerText(e.capacity),
+    'A+B subtotal: ' + ppoPowerText(e.abTotal),
+    'Secondary usage: ' + ppoPowerText(e.secondary),
+    'Command result: ' + (ppoUIAt(view.commandAt) ? new Date(view.commandAt).toLocaleString() : 'time unknown') + ' · ' + ppoCommandAge(view),
+    ppoRequestLine(request), ppoModeLine(view), 'Embedded sample time is unverified.',
+    ppoStaleText(view),
+    'Experimental estimates assume 1 raw unit = 1 W. Corroborated only on a 7.2 kW truck; other ratings and sentinel codes need validation.'
+  ];
+  if (e.secondaryCapacity === null) lines.push('Secondary scope is unknown, so overall total is unknown. Capacity shown is A+B only.');
+  else if (e.secondary === null) lines.push('Secondary usage is unknown, so overall total is unknown.');
+  else if (e.secondaryCapacity > 0) lines.push('Combined capacity and total include the reported secondary output.');
+  return lines.filter(Boolean).join('\n');
+}
+function ppoUIError(error) {
+  const text = error && typeof error.message === 'string' ? error.message : '';
+  if (/cooling down|A vehicle request was just sent/.test(text)) return 'A request is cooling down. Keep the cached report and wait before requesting again.';
+  if (/Connect (?:FordPass|mobile)|Connect .* in the app first/.test(text)) return 'Connect FordPass in the app first, then open Pro Power again.';
+  if (text === 'Pro Power baseline could not be read. No vehicle status request was sent.') return text;
+  return 'The Pro Power action could not be completed. Its outcome is unconfirmed; it was not automatically retried. Showing the last cached report.';
+}
+AppController.prototype.confirmProPowerStatus = async function(prefs) {
+  requireApp();
+  const alert = new Alert(); alert.title = 'Request Pro Power status once?';
+  alert.message = 'This requests one Pro Power status update and may wake the truck\'s connected electronics. It does not request engine start/stop or outlet switching. The app checks the cloud result for up to 30 seconds after acceptance. Updated measurements are not guaranteed, and the command is never automatically retried.';
+  alert.addAction('Request status once'); alert.addCancelAction('Cancel');
+  if (await alert.presentAlert() < 0) return false;
+  requireApp();
+  try {
+    const result = await new FordAPIClient(this.auth, this.store, prefs).requestProPowerStatus(true);
+    await message('Pro Power status request', result.message);
+    return true;
+  } catch (error) { await message('Pro Power', ppoUIError(error)); return false; }
+};
+AppController.prototype.proPowerDetails = async function(prefs) {
+  requireApp();
+  for (;;) {
+    requireApp();
+    const cache = this.store.read(), snapshot = ppoSnapshotFor(cache, prefs);
+    const request = cache && cache.vin === prefs.vin ? cache.proPowerRequest : null;
+    const menu = new Alert(); menu.title = 'Pro Power · last reported'; menu.message = ppoDetailsText(snapshot, request);
+    ['Read cached Pro Power', 'Request status once…'].forEach(label => menu.addAction(label));
+    menu.addCancelAction('Close');
+    const choice = await menu.presentSheet();
+    requireApp();
+    if (choice < 0) return;
+    if (choice === 0) {
+      try { const result = await new FordAPIClient(this.auth, this.store, prefs).readProPower(true); await message('Pro Power cloud cache', result.note); }
+      catch (error) { await message('Pro Power', ppoUIError(error)); }
+    } else if (choice === 1) await this.confirmProPowerStatus(prefs);
+  }
+};
+const PPO_UI_ORIGINAL_ACTION = AppController.prototype.action;
+AppController.prototype.action = async function(action, prefs) {
+  if (!['propower', 'ppofetch', 'ppostatus'].includes(action)) return PPO_UI_ORIGINAL_ACTION.call(this, action, prefs);
+  requireApp();
+  if (action === 'ppofetch') {
+    try { const result = await new FordAPIClient(this.auth, this.store, prefs).readProPower(true); await message('Pro Power cloud cache', result.note); }
+    catch (error) { await message('Pro Power', ppoUIError(error)); }
+  } else if (action === 'ppostatus') await this.confirmProPowerStatus(prefs);
+  return this.proPowerDetails(prefs);
+};
+
+// Large mixed dashboard only. Data, authentication and vehicle actions are unchanged.
+function ppoDashboardAge(at, clock = now()) {
+  if (typeof at !== 'number' || !Number.isFinite(at) || at <= 0 || at > clock) return 'unknown';
+  const seconds = Math.floor((clock - at) / 1000), minutes = Math.floor(seconds / 60);
+  if (seconds < 60) return seconds + 's ago';
+  if (minutes < 60) return minutes + 'm ago';
+  const hours = Math.floor(minutes / 60);
+  return hours < 48 ? hours + 'h ' + minutes % 60 + 'm ago' : Math.floor(hours / 24) + 'd ' + hours % 24 + 'h ago';
+}
+
+function ppoDashboardVehicle(renderer, widget) {
+  const vehicle = widget.addStack(); vehicle.layoutVertically(); vehicle.spacing = 3;
+  const header = vehicle.addStack(); header.layoutHorizontally(); header.centerAlignContent(); header.spacing = 6;
+  renderer.truck(header, 64, 24);
+  const name = header.addStack(); name.layoutVertically();
+  renderer.text(name, renderer.prefs.name || 'F-150', 14, true);
+  renderer.text(name, 'Vehicle · last reported', 8, false, renderer.muted);
+  header.addSpacer(); renderer.runningBadge(header, 12, false);
+
+  if (renderer.on('fuel') || renderer.on('battery')) {
+    const row = vehicle.addStack(); row.layoutHorizontally(); row.centerAlignContent(); row.spacing = 8;
+    if (renderer.on('fuel')) {
+      const fuel = row.addStack(); fuel.layoutVertically(); fuel.spacing = 1;
+      // Unknown fuel must not resemble a full gauge, even in the light theme.
+      if (finite(renderer.value('fuel')) === null) {
+        renderer.text(fuel, 'Fuel unavailable', 11, true);
+        renderer.text(fuel, 'Range ' + renderer.number('range', ' mi'), 9, false, renderer.muted);
+      } else renderer.fuel(fuel, 132);
+    }
+    row.addSpacer(); renderer.batteryPill(row);
+  }
+
+  if (renderer.on('tires')) {
+    const row = vehicle.addStack(); row.layoutHorizontally(); row.centerAlignContent(); row.spacing = 9;
+    renderer.text(row, 'TIRES · ' + renderer.opts.unit.toUpperCase(), 8, true, renderer.muted);
+    for (const key of ['fl', 'fr', 'rl', 'rr']) {
+      const cell = row.addStack(); cell.layoutVertically();
+      renderer.text(cell, key.toUpperCase(), 8, false, renderer.muted);
+      renderer.text(cell, renderer.tire(key), 11, true);
+    }
+  }
+
+  const extras = [];
+  if (renderer.on('oil')) extras.push('Oil ' + renderer.number('oil', '%'));
+  if (renderer.on('odometer')) extras.push('Odometer ' + renderer.number('odometer', ' mi'));
+  if (renderer.on('temp')) extras.push('Outside ' + renderer.temp());
+  if (extras.length) {
+    const row = vehicle.addStack(); row.layoutHorizontally(); row.spacing = 10;
+    for (const line of extras) renderer.text(row, line, 10, true);
+  }
+
+  if (renderer.on('lock') || renderer.on('doors')) {
+    const row = vehicle.addStack(); row.layoutHorizontally(); row.spacing = 8;
+    for (const key of ['lock', 'doors']) {
+      if (!renderer.on(key)) continue;
+      const cell = row.addStack(); cell.layoutVertically(); cell.spacing = 1; cell.size = new Size(138, 0);
+      if (key === 'lock') renderer.lockPill(cell);
+      else renderer.text(cell, 'Doors ' + (renderer.value('doors') || 'Unknown'), 10, true);
+      const field = renderer.fields[key];
+      renderer.text(cell, 'Reported: ' + ppoDashboardAge(field && field.at), 8, false, renderer.muted);
+    }
+  }
+
+  if (renderer.on('parked')) {
+    if (renderer.place()) renderer.parkedRow(vehicle, 9);
+    else renderer.text(vehicle, 'Parked location unavailable', 9, false, renderer.muted);
+  }
+  return vehicle;
+}
+
+function ppoDashboardPanel(renderer, widget, selected) {
+  const snapshot = ppoSnapshotFor(renderer.cache, renderer.prefs), view = ppoView(snapshot);
+  const entries = ppoEntries(ppoEstimated(snapshot), selected);
+  const panel = widget.addStack(); panel.layoutVertically(); panel.spacing = 2; panel.url = renderer.url('propower');
+  const header = panel.addStack(); header.layoutHorizontally(); header.centerAlignContent(); header.spacing = 6;
+  renderer.text(header, 'Pro Power · last reported estimates', 9, true);
+  header.addSpacer(); renderer.text(header, 'Sample time unknown', 8, false, renderer.muted);
+  renderer.text(panel, 'Status result: ' + ppoDashboardAge(view.commandAt), 8, false, renderer.muted);
+  const mode = view.latestMode || {}, modeValue = ['OFF', 'LOW', 'HIGH'].includes(mode.value) ? mode.value : 'unknown';
+  renderer.text(panel, 'Ford mode: ' + modeValue + ' · reported ' + ppoDashboardAge(mode.at), 8, false, renderer.muted);
+  for (let i = 0; i < entries.length; i += 2) {
+    const row = panel.addStack(); row.layoutHorizontally(); row.spacing = 8;
+    row.addSpacer();
+    for (const item of entries.slice(i, i + 2)) {
+      const card = row.addStack(); card.layoutVertically(); card.spacing = 1;
+      card.size = new Size(138, 0); card.setPadding(4, 7, 4, 7); card.cornerRadius = 8; card.backgroundColor = renderer.panel;
+      renderer.text(card, item.label, 9, true, renderer.muted);
+      renderer.text(card, ppoPowerText(item.value), 16, true);
+    }
+    row.addSpacer();
+  }
+  return panel;
+}
+
+function ppoBuildDashboard(renderer, family, notice, selected) {
+  const widget = renderer.frame([8, 12, 8, 12]);
+  // The root retains the main-menu target; only the PPO panel opens its details.
+  ppoDashboardVehicle(renderer, widget);
+  widget.addSpacer(6); ppoDashboardPanel(renderer, widget, selected);
+  widget.addSpacer();
+  if (renderer.opts.layout.large === 'controls') {
+    renderer.text(widget, 'Vehicle controls', 8, true, renderer.muted);
+    widget.addSpacer(2); renderer.buttons(widget, 4, 64, 34);
+  }
+  widget.addSpacer(3);
+  const status = notice || (renderer.cache.notice ? 'cached source unavailable' : '');
+  renderer.text(widget, 'Oldest vehicle reading: ' + ppoDashboardAge(renderer.oldest()) +
+    (status ? ' · ' + status : ''), 8, false, renderer.muted);
+  return widget;
+}
+
+const PPO_DASHBOARD_ORIGINAL_BUILD = WidgetRenderer.prototype.build;
+WidgetRenderer.prototype.build = function(family = 'medium', notice = '') {
+  const selected = ppoSelected(this);
+  if ((family === 'large' || family === 'extraLarge') && selected.length && ppoHasOriginalSelection(this))
+    return ppoBuildDashboard(this, family, notice, selected);
+  return PPO_DASHBOARD_ORIGINAL_BUILD.call(this, family, notice);
+};
+
+// Local metadata only: fixed gate names, fixed cache fields, and no token reads.
+// Missing historical HTTP metadata stays unknown; a gate is not an HTTP trace.
+const FORDWIDGET_PREVIEW_VERSION = '0.1.6';
+const WIDGET_DIAGNOSTIC_GATES = Object.freeze([
+  'commands', 'commands.generalStatus', 'commands.proPower', 'telemetry.mobile',
+  'telemetry.proPower', 'auth.mobile', 'auth.autonomic'
+]);
+const WIDGET_DIAGNOSTIC_TIMERS = Object.freeze([
+  'widgetRefreshAfter', 'commandAfter', 'wakeAfter', 'proPowerRequestAfter',
+  'proPowerReadAfter', 'nextFetch'
+]);
+const WIDGET_DIAGNOSTIC_REQUEST_OUTCOMES = Object.freeze([
+  'dispatching', 'device_succeeded', 'device_failed', 'accepted_unconfirmed', 'delivery_uncertain'
+]);
+const WIDGET_DIAGNOSTIC_STEPS = Object.freeze({
+  generalStatus: ['device_succeeded', 'device_failed', 'accepted_unconfirmed', 'delivery_uncertain',
+    'cooldown', 'baseline_unavailable', 'blocked', 'unconfirmed', 'requires_fordpass'],
+  proPowerRequest: ['device_succeeded', 'device_failed', 'accepted_unconfirmed', 'delivery_uncertain',
+    'unconfirmed', 'unconfirmed_or_cooling_down', 'requires_fordpass'],
+  telemetry: ['saved', 'partial', 'cached_or_unavailable', 'failed'],
+  proPowerRead: ['checked', 'cached_or_unavailable', 'failed', 'already_checked_by_request', 'requires_fordpass'],
+  place: ['checked', 'failed', 'skipped'], photo: ['checked', 'failed', 'skipped']
+});
+function widgetDiagnosticOwn(object, key) {
+  if (!object || typeof object !== 'object' || Array.isArray(object)) return undefined;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(object, key);
+    return descriptor && Object.prototype.hasOwnProperty.call(descriptor, 'value') ? descriptor.value : undefined;
+  } catch (_) { return undefined; }
+}
+function widgetDiagnosticNumber(value, maximum = Number.MAX_SAFE_INTEGER) {
+  return typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= maximum ? value : null;
+}
+function widgetDiagnosticTime(value) {
+  return widgetDiagnosticNumber(value, 8640000000000000) !== null && value > 0 ? value : null;
+}
+function widgetDiagnosticAge(value, clock) {
+  const at = widgetDiagnosticTime(value);
+  return at !== null && clock !== null && at <= clock ? Math.floor((clock - at) / 1000) : null;
+}
+function widgetDiagnosticRemaining(value, clock) {
+  const at = widgetDiagnosticTime(value);
+  return at !== null && clock !== null ? Math.max(0, Math.ceil((at - clock) / 1000)) : null;
+}
+function widgetDiagnosticRequest(request, clock) {
+  const outcome = widgetDiagnosticOwn(request, 'outcome');
+  return WIDGET_DIAGNOSTIC_REQUEST_OUTCOMES.includes(outcome) ? {
+    outcome, attemptAgeSeconds: widgetDiagnosticAge(widgetDiagnosticOwn(request, 'attemptAt'), clock)
+  } : null;
+}
+function widgetDiagnosticContext(cache, clock = now()) {
+  const time = widgetDiagnosticTime(clock), gates = {}, cooldowns = {};
+  for (const name of WIDGET_DIAGNOSTIC_GATES) {
+    let gate;
+    try { gate = secretGet('gate.' + name); } catch (_) { /* Unavailable metadata stays unknown. */ }
+    const remaining = widgetDiagnosticRemaining(widgetDiagnosticOwn(gate, 'next'), time);
+    const failures = widgetDiagnosticNumber(widgetDiagnosticOwn(gate, 'failures'), 10);
+    const status = widgetDiagnosticNumber(widgetDiagnosticOwn(gate, 'httpStatus'), 599);
+    gates[name] = {
+      active: remaining === null ? null : remaining > 0, secondsRemaining: remaining,
+      failures: failures !== null && Number.isInteger(failures) && failures >= 0 ? failures : null,
+      httpStatus: status !== null && Number.isInteger(status) && (status === 0 || status >= 100) ? status : null,
+      failedAgeSeconds: widgetDiagnosticAge(widgetDiagnosticOwn(gate, 'failedAt'), time)
+    };
+  }
+  for (const name of WIDGET_DIAGNOSTIC_TIMERS)
+    cooldowns[name] = widgetDiagnosticRemaining(widgetDiagnosticOwn(cache, name), time);
+  const ppo = widgetDiagnosticOwn(cache, 'proPower');
+  const fields = widgetDiagnosticOwn(cache, 'fields'), fuel = widgetDiagnosticOwn(fields, 'fuel');
+  const fuelInput = widgetDiagnosticOwn(fuel, 'value');
+  const fuelNumber = typeof fuelInput === 'number' || typeof fuelInput === 'string' && fuelInput.length <= 40 ? finite(fuelInput) : null;
+  const fuelValue = widgetDiagnosticNumber(fuelNumber, 1000000);
+  const fuelRaw = widgetDiagnosticNumber(widgetDiagnosticOwn(fuel, 'rawValue'), 1000000);
+  const fuelAt = widgetDiagnosticTime(widgetDiagnosticOwn(fuel, 'at'));
+  const fuelSource = widgetDiagnosticOwn(fuel, 'source');
+  const last = widgetDiagnosticOwn(cache, 'widgetRefreshLast'), outcome = widgetDiagnosticOwn(last, 'outcome');
+  let lastFullRefresh = null;
+  if (['in_progress', 'completed', 'cooldown', 'blocked', 'cancelled'].includes(outcome)) {
+    const input = widgetDiagnosticOwn(last, 'steps'), steps = {};
+    for (const name of Object.keys(WIDGET_DIAGNOSTIC_STEPS)) {
+      const value = widgetDiagnosticOwn(input, name);
+      if (WIDGET_DIAGNOSTIC_STEPS[name].includes(value)) steps[name] = value;
+    }
+    lastFullRefresh = { attemptAgeSeconds: widgetDiagnosticAge(widgetDiagnosticOwn(last, 'attemptAt'), time), outcome, steps };
+  }
+  return {
+    previewVersion: FORDWIDGET_PREVIEW_VERSION, gates, cooldowns,
+    lastGeneralStatusRequest: widgetDiagnosticRequest(widgetDiagnosticOwn(cache, 'generalStatusRequest'), time),
+    lastProPowerStatusRequest: widgetDiagnosticRequest(widgetDiagnosticOwn(cache, 'proPowerRequest'), time),
+    cachedProPower: { commandAgeSeconds: widgetDiagnosticAge(widgetDiagnosticOwn(ppo, 'commandAt'), time),
+      fetchedAgeSeconds: widgetDiagnosticAge(widgetDiagnosticOwn(ppo, 'fetchedAt'), time) },
+    cachedFuel: fuel ? { value: fuelValue, rawValue: fuelRaw, atMs: fuelAt !== null && time !== null && fuelAt <= time ? fuelAt : null,
+      ageSeconds: widgetDiagnosticAge(fuelAt, time), source: ['FordPass', 'FordConnect'].includes(fuelSource) ? fuelSource : null } : null,
+    lastFullRefresh
+  };
+}
+
+// Pure fuel investigation using an already-fetched response. No I/O or cache write.
+const statusFuelType = value => value === undefined ? 'missing' : value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+function statusFuelNumber(value) {
+  const inputType = statusFuelType(value);
+  const n = inputType === 'number' || inputType === 'string' && value.length <= 40 ? finite(value) : null;
+  const safe = n !== null && Math.abs(n) <= 1000000;
+  return { inputType, numericValue: safe ? n : null, withheldCount: value !== undefined && value !== null && !safe ? 1 : 0 };
+}
+function statusFuelEntry(entry, units, clock) {
+  const record = statusDiagRecord(entry), own = key => record && statusDiagOwn(entry, key) ? entry[key] : undefined;
+  return { entryType: statusFuelType(entry),
+    value: statusFuelNumber(own('value')),
+    unit: statusDiagnosticEnum(own('unit'), units),
+    unitSymbol: statusDiagnosticEnum(own('unitSymbol'), units),
+    updateTime: statusDiagnosticTime(own('updateTime'), clock) };
+}
+function statusFuelFields(fields, clock) {
+  const item = statusDiagRecord(fields) && statusDiagOwn(fields, 'fuel') && statusDiagRecord(fields.fuel) ? fields.fuel : null;
+  return { fuel: item ? { value: statusFuelNumber(item.value),
+    rawValue: statusFuelNumber(item.rawValue),
+    source: ['FordPass', 'FordConnect'].includes(item.source) ? item.source : null,
+    at: statusDiagnosticTime(item.at, clock) } : null };
+}
+function statusFuelDiagnostic(raw, before, vin, clock = now(), after = before) {
+  if (typeof vin !== 'string' || vin.length !== 17 || !vinOK(vin) || !statusDiagRecord(raw))
+    throw new Error('Fuel diagnostic response vehicle mismatch.');
+  const root = statusDiagOwn(raw, 'vehicleStatus') ? raw.vehicleStatus : raw;
+  if (!statusDiagRecord(root) || !statusDiagRecord(root.metrics)) throw new Error('Fuel diagnostic response schema unsupported.');
+  for (const object of [raw, root]) for (const key of ['vin', 'VIN']) {
+    if (statusDiagOwn(object, key) && (typeof object[key] !== 'string' || object[key].toUpperCase() !== vin))
+      throw new Error('Fuel diagnostic response vehicle mismatch.');
+  }
+  statusDiagValidateCache(before, vin); statusDiagValidateCache(after, vin);
+  const metrics = root.metrics, fuel = statusDiagOwn(metrics, 'fuelLevel') ? metrics.fuelLevel : undefined;
+  const value = statusDiagRecord(fuel) && statusDiagOwn(fuel, 'value') ? fuel.value : undefined;
+  const n = finite(value);
+  const reason = fuel === undefined || fuel === null || statusDiagRecord(fuel) && (value === undefined || value === null) ? 'fuel_missing' :
+    n === null ? 'non_numeric' : n < 0 ? 'out_of_0_100' : n > 100 ? 'clamped_to_100' : 'accepted';
+  let candidate = {}, normalization = 'completed';
+  try { candidate = normalize(raw, vin, 'FordPass', clock); }
+  catch (_) { normalization = 'no_supported_fields_or_schema'; }
+  const only = fields => statusDiagOwn(fields, 'fuel') ? { fuel: fields.fuel } : {};
+  const merged = mergeFields(only(before.fields), {}, only(candidate));
+  return { readOnly: true, scope: 'fuelLevel percentage; positive over-100 readings clamp to 100 with raw value retained. No aliases or unit conversion applied.',
+    normalization, reason, rootUpdateTime: statusDiagnosticTime(root.updateTime, clock),
+    raw: { fuelLevel: statusFuelEntry(fuel, ['%', 'percent', 'percentage'], clock),
+      fuelRange: statusFuelEntry(statusDiagOwn(metrics, 'fuelRange') ? metrics.fuelRange : undefined,
+        ['km', 'kilometer', 'kilometers', 'mi', 'mile', 'miles'], clock) },
+    before: statusFuelFields(before.fields, clock), normalizedCandidate: statusFuelFields(candidate, clock),
+    wouldMerge: statusFuelFields(merged, clock), cachedAfter: statusFuelFields(after.fields, clock) };
+}
+
+// Passive, redacted lock/door investigation. No cache write or vehicle command.
+const STATUS_DIAG_COMPONENTS = Object.freeze(['ALL_DOORS', 'FRONT_LEFT', 'FRONT_RIGHT', 'REAR_LEFT', 'REAR_RIGHT',
+  'LEFT_FRONT', 'RIGHT_FRONT', 'LEFT_REAR', 'RIGHT_REAR', 'HOOD', 'TAILGATE', 'TRUNK', 'CARGO', 'DRIVER', 'PASSENGER',
+  'FRUNK', 'INNER_TAILGATE', 'REAR_CARGO_LEFT', 'REAR_CARGO_RIGHT', 'SLIDING_LEFT', 'SLIDING_RIGHT',
+  'UNKNOWN_DOOR', 'UNSPECIFIED_DOOR', 'UNSPECIFIED_FRONT', 'UNSPECIFIED_REAR']);
+const STATUS_DIAG_LOCKS = Object.freeze(['LOCKED', 'DOUBLE_LOCKED', 'UNLOCKED', 'UNKNOWN']);
+const STATUS_DIAG_DOORS = Object.freeze(['OPEN', 'AJAR', 'CLOSED', 'UNKNOWN', 'INVALID']);
+const statusDiagRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const statusDiagOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+function statusDiagnosticEnum(value, allowed) {
+  const canonical = typeof value === 'string' && value.length <= 32 ? allowed.find(item => item.toUpperCase() === value.toUpperCase()) : undefined;
+  return { value: canonical === undefined ? null : value, exactEnumMatch: canonical !== undefined && allowed.includes(value),
+    withheldCount: value !== undefined && canonical === undefined ? 1 : 0 };
+}
+function statusDiagnosticTime(value, clock = now()) {
+  const inputType = value === undefined ? 'missing' : value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+  const out = { inputType, format: inputType === 'missing' || inputType === 'null' ? inputType : 'withheld',
+    rawValue: null, normalizerAtMs: null, asMillisecondsISO: null, asEpochSecondsISO: null,
+    withheldCount: value === undefined || value === null ? 0 : 1 };
+  const numeric = typeof value === 'number' ? value : typeof value === 'string' && value.length <= 40 && /^\d{1,16}(?:\.\d{1,6})?$/.test(value) ? Number(value) : NaN;
+  if (Number.isFinite(numeric) && (numeric === 0 || numeric >= 946684800 && numeric <= clock / 1000 + 60 || numeric >= 946684800000 && numeric <= clock + 60000)) {
+    const seconds = numeric >= 946684800 && numeric <= clock / 1000 + 60;
+    out.format = numeric === 0 ? 'zero' : seconds ? 'epoch_seconds' : 'epoch_milliseconds';
+    out.rawValue = value; out.withheldCount = 0; out.asMillisecondsISO = new Date(numeric).toISOString();
+    if (seconds) out.asEpochSecondsISO = new Date(numeric * 1000).toISOString();
+    out.normalizerAtMs = timestamp(value);
+  } else if (typeof value === 'string' && value.length <= 40 && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed) && parsed >= 946684800000 && parsed <= clock + 60000) {
+      out.format = 'iso'; out.rawValue = value; out.withheldCount = 0; out.normalizerAtMs = timestamp(value); out.asMillisecondsISO = new Date(parsed).toISOString();
+    }
+  }
+  return out;
+}
+function statusDiagnosticFields(fields, clock) {
+  const result = {};
+  for (const key of ['lock', 'doors']) {
+    const item = statusDiagRecord(fields) && statusDiagOwn(fields, key) && statusDiagRecord(fields[key]) ? fields[key] : null;
+    result[key] = item ? { value: statusDiagnosticEnum(item.value, key === 'lock' ? ['Locked', 'Unlocked'] : ['Closed', 'Ajar']),
+      source: ['FordPass', 'FordConnect'].includes(item.source) ? item.source : null,
+      at: statusDiagnosticTime(item.at, clock) } : null;
+  }
+  return result;
+}
+function statusDiagnosticEntry(entry, allowed, clock) {
+  if (!statusDiagRecord(entry)) return { malformed: true, withheldCount: entry === undefined ? 0 : 1 };
+  const tags = statusDiagRecord(entry.tags) ? entry.tags : {};
+  const component = statusDiagnosticEnum(entry.vehicleDoor, STATUS_DIAG_COMPONENTS);
+  const value = statusDiagnosticEnum(entry.value, allowed);
+  const latchValues = ['MECHANICAL', 'ELECTRONIC', 'UNKNOWN'];
+  const latch = statusDiagnosticEnum(tags.DOOR_LATCH_TYPE, latchValues);
+  const directLatch = statusDiagnosticEnum(entry.doorLatchType, latchValues);
+  const side = statusDiagnosticEnum(entry.vehicleSide, ['UNKNOWN', 'DRIVER', 'PASSENGER']);
+  const role = statusDiagnosticEnum(entry.vehicleOccupantRole, ['UNKNOWN', 'DRIVER', 'PASSENGER']);
+  const updateTime = statusDiagnosticTime(entry.updateTime, clock);
+  return { component, value, doorLatchType: latch, directDoorLatchType: directLatch, vehicleSide: side, vehicleOccupantRole: role, updateTime,
+    withheldCount: component.withheldCount + value.withheldCount + latch.withheldCount + directLatch.withheldCount + side.withheldCount + role.withheldCount + updateTime.withheldCount +
+      (entry.tags !== undefined && !statusDiagRecord(entry.tags) ? 1 : 0) +
+      Object.keys(entry).filter(key => !['vehicleDoor', 'value', 'tags', 'updateTime', 'doorLatchType', 'vehicleSide', 'vehicleOccupantRole'].includes(key)).length +
+      Object.keys(tags).filter(key => key !== 'DOOR_LATCH_TYPE').length };
+}
+function statusDiagnosticArray(value, allowed, clock) {
+  if (!Array.isArray(value)) return { items: [], count: 0, omittedCount: 0, malformed: value !== undefined, withheldCount: value === undefined ? 0 : 1 };
+  return { items: value.slice(0, 32).map(entry => statusDiagnosticEntry(entry, allowed, clock)), count: value.length,
+    omittedCount: Math.max(0, value.length - 32), malformed: false };
+}
+function statusDiagValidateCache(cache, vin) {
+  if (!statusDiagRecord(cache) || cache.vin !== vin || !statusDiagRecord(cache.fields)) throw new Error('Diagnostic cache vehicle mismatch.');
+}
+function statusDiagnosticGeneralRequest(cache, clock) {
+  const entry = statusDiagRecord(cache.generalStatusRequest) ? cache.generalStatusRequest : null;
+  if (!entry) return null;
+  const allowed = ['dispatching', 'device_succeeded', 'device_failed', 'accepted_unconfirmed', 'delivery_uncertain'];
+  const at = typeof entry.attemptAt === 'number' && Number.isFinite(entry.attemptAt) && entry.attemptAt > 0 && entry.attemptAt <= clock ? entry.attemptAt : null;
+  return { outcome: allowed.includes(entry.outcome) ? entry.outcome : null,
+    attemptAgeSeconds: at === null ? null : Math.floor((clock - at) / 1000) };
+}
+function statusDiagnosticReport(raw, before, vin, clock = now(), after = before) {
+  if (typeof vin !== 'string' || vin.length !== 17 || !vinOK(vin) || !statusDiagRecord(raw)) throw new Error('Diagnostic response vehicle mismatch.');
+  const root = statusDiagOwn(raw, 'vehicleStatus') ? raw.vehicleStatus : raw;
+  if (!statusDiagRecord(root) || !statusDiagRecord(root.metrics)) throw new Error('Diagnostic response schema unsupported.');
+  for (const object of [raw, root]) for (const key of ['vin', 'VIN']) {
+    if (statusDiagOwn(object, key) && (typeof object[key] !== 'string' || object[key].toUpperCase() !== vin)) throw new Error('Diagnostic response vehicle mismatch.');
+  }
+  statusDiagValidateCache(before, vin); statusDiagValidateCache(after, vin);
+  let candidate = {}, normalization = 'completed';
+  try { candidate = normalize(raw, vin, 'FordPass', clock); }
+  catch (_) { normalization = 'no_supported_fields_or_schema'; }
+  const only = fields => Object.fromEntries(['lock', 'doors'].filter(key => statusDiagOwn(fields, key)).map(key => [key, fields[key]]));
+  const merged = mergeFields(only(before.fields), {}, only(candidate));
+  return { tool: 'FordWidget door / lock diagnostic', reportVersion: 2, readOnly: true,
+    normalization, rootUpdateTime: statusDiagnosticTime(root.updateTime, clock),
+    lastGeneralStatusRequest: statusDiagnosticGeneralRequest(after, clock),
+    before: statusDiagnosticFields(before.fields, clock), normalizedCandidate: statusDiagnosticFields(candidate, clock),
+    wouldMerge: statusDiagnosticFields(merged, clock), cachedAfter: statusDiagnosticFields(after.fields, clock),
+    raw: { doorLockStatus: statusDiagnosticArray(root.metrics.doorLockStatus, STATUS_DIAG_LOCKS, clock),
+      doorStatus: statusDiagnosticArray(root.metrics.doorStatus, STATUS_DIAG_DOORS, clock),
+      hoodStatus: statusDiagnosticEntry(root.metrics.hoodStatus, STATUS_DIAG_DOORS, clock) } };
+}
+AppController.prototype.vehicleStatusDiagnostic = async function(prefs) {
+  requireApp();
+  try {
+    const vin = prefs && prefs.vin;
+    const validate = () => {
+      requireApp(); this.store.assertLease();
+      const configured = secretGet('vehicle');
+      if (typeof vin !== 'string' || vin.length !== 17 || !vinOK(vin) || !configured || configured.vin !== vin || prefs.vin !== vin) throw new Error('Diagnostic configured vehicle changed.');
+    };
+    validate();
+    if (!secretGet('token.mobile')) { await message('Vehicle data diagnostic', 'Connect FordPass first. No cloud read was sent.'); return null; }
+    const choice = new Alert(); choice.title = 'Vehicle data diagnostic';
+    choice.message = 'Check the saved cooldowns and compare one passive Ford cloud read with cached fuel, door and lock readings. No vehicle command or telemetry-cache update is requested. A redacted cached report remains available if the cloud read is blocked.';
+    choice.addAction('Preview report'); choice.addAction('Copy report'); choice.addCancelAction('Cancel');
+    const selected = await choice.presentAlert(); if (selected < 0) return null;
+    validate(); const before = this.store.read(); statusDiagValidateCache(before, vin);
+    let raw = null, cloudReadOutcome = 'unavailable';
+    try {
+      raw = await new FordAPIClient(this.auth, this.store, prefs).mobileTelemetry();
+      cloudReadOutcome = 'succeeded';
+    } catch (_) { /* Report only safe cached gates/status; never copy raw errors. */ }
+    validate(); const after = this.store.read(); statusDiagValidateCache(after, vin);
+    const clock = now();
+    let report = null;
+    if (raw !== null) {
+      try {
+        report = statusDiagnosticReport(raw, before, vin, clock, after);
+        report.fuel = statusFuelDiagnostic(raw, before, vin, clock, after);
+      } catch (_) { report = null; cloudReadOutcome = 'response_rejected'; }
+    }
+    if (!report) report = { readOnly: true, before: statusDiagnosticFields(before.fields, clock),
+      cachedAfter: statusDiagnosticFields(after.fields, clock), fuel: null };
+    report.tool = 'FordWidget vehicle data diagnostic';
+    report.reportVersion = 3;
+    report.previewVersion = FORDWIDGET_PREVIEW_VERSION;
+    report.cloudReadOutcome = cloudReadOutcome;
+    report.refreshDiagnostics = widgetDiagnosticContext(after, clock);
+    const text = JSON.stringify(report, null, 2);
+    let copy = selected === 1;
+    if (!copy) {
+      await QuickLook.present(text); validate();
+      const next = new Alert(); next.title = 'Redacted report ready'; next.message = 'Copy this same report to share fuel/status timestamps and cooldown details. No additional cloud read is needed.';
+      next.addAction('Copy report'); next.addCancelAction('Close'); copy = await next.presentAlert() === 0;
+    }
+    validate();
+    if (copy) { Pasteboard.copyString(text); await message('Vehicle data diagnostic', 'Redacted report copied.'); }
+    return report;
+  } catch (_) { await message('Vehicle data diagnostic', 'The diagnostic could not be completed. Raw errors are withheld. No vehicle command or telemetry-cache update was requested.'); return null; }
+};
+
+// General TCU status push uses the original v1 command, separate from PPO.
+const GENERAL_STATUS_STATES = new Set(('REQUESTED REQUEST_DELIVERY_QUEUED CANCELLATION_IN_PROGRESS EXPIRED CANCELLED FAILURE SUCCESS SUCCEEDED_ON_DEVICE OEM_CLOUD_DELIVERY_IN_PROGRESS REQUEST_DELIVERY_IN_PROGRESS OEM_CLOUD_TRANSLATION_IN_PROGRESS REQUEST_QUEUED REQUEST_DELIVERY_FAILURE REQUEST_DELIVERY_TIMED_OUT REQUEST_VALIDATION_IN_PROGRESS REQUEST_VALIDATION_FAILURE CLOUD_VALIDATION_IN_PROGRESS CLOUD_VALIDATION_FAILURE OEM_CLOUD_TO_DEVICE_DELIVERY_IN_PROGRESS ACTUATION_IN_PROGRESS').split(' '));
+function generalStatusCommand(raw) {
+  const root = ppoRoot(raw);
+  return ppoChild(ppoChild(root, 'states'), 'statusRefreshCommand');
+}
+function generalStatusState(raw) {
+  const input = ppoChild(ppoChild(generalStatusCommand(raw), 'value'), 'toState');
+  const state = typeof input === 'string' && input.length <= 64 && GENERAL_STATUS_STATES.has(input.toUpperCase()) ? input.toUpperCase() : null;
+  return { state, terminal: state === 'SUCCESS' || ['FAILURE', 'CANCELLED', 'EXPIRED'].includes(state),
+    outcome: state === 'SUCCESS' ? 'device_succeeded' : ['FAILURE', 'CANCELLED', 'EXPIRED'].includes(state) ? 'device_failed' : 'unconfirmed' };
+}
+function generalStatusContext(client, vin) {
+  requireApp(); client.store.assertLease();
+  const configured = secretGet('vehicle'), cache = client.store.read();
+  if (typeof vin !== 'string' || vin.length !== 17 || !vinOK(vin) || !client.prefs || client.prefs.vin !== vin ||
+      !configured || configured.vin !== vin || !cache || cache.vin !== vin || !ppoRecord(cache.fields))
+    throw new APIError('General status refresh vehicle/session mismatch.');
+  return cache;
+}
+async function generalStatusRead(client, vin, deadline = null) {
+  generalStatusContext(client, vin);
+  const previous = client.auth.timeout;
+  if (deadline !== null) {
+    if (deadline <= now()) throw new APIError('General status read window ended.');
+    client.auth.timeout = Math.min(previous || SETTINGS.timeout, (deadline - now()) / 1000);
+  }
+  try {
+    const raw = await client.mobileTelemetry();
+    if (deadline !== null && now() > deadline) throw new APIError('General status read window ended.');
+    generalStatusContext(client, vin); ppoValidate(raw, vin);
+    const root = ppoRoot(raw);
+    if (!ppoRecord(ppoChild(root, 'metrics')) && !ppoRecord(ppoChild(root, 'states')))
+      throw new APIError('General status telemetry schema unsupported.');
+    if (deadline !== null && now() > deadline) throw new APIError('General status read window ended.');
+    return raw;
+  } finally { client.auth.timeout = previous; }
+}
+function generalStatusResult(client, vin, attemptAt, outcome, dispatched) {
+  if (attemptAt !== null) {
+    try { const cache = generalStatusContext(client, vin);
+      cache.generalStatusRequest = { attemptAt, outcome }; client.store.write(cache);
+    } catch (_) { /* A lost session must not write another run's cache. */ }
+  }
+  const messages = {
+    device_succeeded: 'Ford reports the matched general status-refresh command succeeded. Individual measurement times may still differ.',
+    device_failed: 'Ford reports the matched general status request failed, expired or was canceled. It was not retried.',
+    accepted_unconfirmed: 'General status refresh was accepted; its completion was not confirmed in the read window.',
+    delivery_uncertain: 'General status-refresh delivery is uncertain. It was not retried.',
+    cooldown: 'General status refresh is cooling down or blocked by an existing request gate. No new general status command was sent.',
+    baseline_unavailable: 'The general status baseline could not be read. No general status command was sent.',
+    blocked: 'General status refresh stopped because the configured vehicle or app session changed.'
+  };
+  return { outcome, dispatched, message: messages[outcome] };
+}
+FordAPIClient.prototype.requestGeneralStatus = async function(confirmed = false) {
+  requireApp();
+  if (confirmed !== true) throw new APIError('Confirm the general status refresh in the app first.');
+  const vin = this.prefs && this.prefs.vin;
+  const result = (outcome, dispatched = false, at = null) => generalStatusResult(this, vin, at, outcome, dispatched);
+  const available = () => {
+    const cache = generalStatusContext(this, vin);
+    this.auth.gate('commands');
+    this.auth.gate('commands.generalStatus');
+    return !(cache.commandAfter > now() || cache.wakeAfter > now());
+  };
+  try { generalStatusContext(this, vin); } catch (_) { return result('blocked'); }
+  try { if (!available()) return result('cooldown'); } catch (_) { return result('cooldown'); }
+  let token, baseline;
+  try {
+    token = await this.auth.token('autonomic');
+    if (!available()) return result('cooldown');
+    baseline = await generalStatusRead(this, vin);
+  } catch (_) { return result('baseline_unavailable'); }
+  const historicalID = ppoID(ppoChild(generalStatusCommand(baseline), 'commandId'));
+  let cache;
+  try { if (!available()) return result('cooldown'); cache = generalStatusContext(this, vin); }
+  catch (_) { return result('blocked'); }
+  const attemptAt = now();
+  cache.commandAfter = attemptAt + SETTINGS.commandInterval;
+  cache.wakeAfter = attemptAt + SETTINGS.wakeInterval;
+  cache.generalStatusRequest = { attemptAt, outcome: 'dispatching' }; this.store.write(cache);
+  let receipt;
+  try {
+    // Exactly the original v1 body/route, with an independent error backoff.
+    // The global legacy command gate was checked immediately before dispatch.
+    const body = await this.auth.request('commands.generalStatus',
+      'https://api.autonomic.ai/v1/command/vehicles/' + vin + '/commands', 'POST',
+      { properties: {}, tags: {}, type: 'statusRefresh', wakeUp: true }, this.auth.mobileHeaders(token));
+    receipt = this.receipt(body);
+    generalStatusContext(this, vin);
+  } catch (_) { return result('delivery_uncertain', true, attemptAt); }
+  const id = ppoID(ppoChild(receipt, 'id'));
+  if (!id || id === historicalID) return result('accepted_unconfirmed', true, attemptAt);
+  const deadline = now() + 40000;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    if (attempt) await new Promise(resolve => Timer.schedule(Math.min(5000, Math.max(0, deadline - now())), false, resolve));
+    if (now() >= deadline) break;
+    let raw;
+    try { raw = await generalStatusRead(this, vin, deadline); }
+    catch (_) { break; } // No further poll after a transport, gate or lease error.
+    if (ppoChild(generalStatusCommand(raw), 'commandId') !== id) continue;
+    const state = generalStatusState(raw);
+    if (state.terminal) return result(state.outcome, true, attemptAt);
+  }
+  return result('accepted_unconfirmed', true, attemptAt);
+};
+
+// One foreground refresh requests general status, then PPO, then reads telemetry.
+// Original Wake, engine and lock actions keep their existing handlers.
+AppController.prototype.refreshWidget = async function(prefs) {
+  requireApp();
+  const vin = prefs && prefs.vin, steps = {};
+  let attemptAt = null;
+  const stageCodes = {
+    generalStatus: ['device_succeeded', 'device_failed', 'accepted_unconfirmed', 'delivery_uncertain', 'cooldown', 'baseline_unavailable', 'blocked', 'unconfirmed', 'requires_fordpass'],
+    proPowerRequest: ['device_succeeded', 'device_failed', 'accepted_unconfirmed', 'delivery_uncertain', 'unconfirmed', 'unconfirmed_or_cooling_down', 'requires_fordpass'],
+    telemetry: ['saved', 'partial', 'cached_or_unavailable', 'failed'],
+    proPowerRead: ['checked', 'cached_or_unavailable', 'failed', 'already_checked_by_request', 'requires_fordpass'],
+    place: ['checked', 'failed', 'skipped'], photo: ['checked', 'failed', 'skipped']
+  };
+  const validate = () => {
+    requireApp(); this.store.assertLease();
+    const configured = secretGet('vehicle'), cache = this.store.read();
+    if (typeof vin !== 'string' || vin.length !== 17 || !vinOK(vin) || !configured || configured.vin !== vin || prefs.vin !== vin ||
+        !cache || cache.vin !== vin || !cache.fields || typeof cache.fields !== 'object' || Array.isArray(cache.fields))
+      throw new Error('Widget refresh vehicle/session mismatch.');
+    return cache;
+  };
+  const marker = outcome => ({ attemptAt, outcome: ['in_progress', 'completed', 'blocked'].includes(outcome) ? outcome : 'in_progress',
+    steps: Object.fromEntries(Object.keys(stageCodes).filter(key => stageCodes[key].includes(steps[key])).map(key => [key, steps[key]])) });
+  const checkpoint = (outcome = 'in_progress') => {
+    if (attemptAt === null) return;
+    // Re-read after every await so a marker never replaces newly saved fields.
+    const current = validate(); current.widgetRefreshLast = marker(outcome); this.store.write(current);
+  };
+  const cooling = cache => typeof cache.widgetRefreshAfter === 'number' && Number.isFinite(cache.widgetRefreshAfter) && cache.widgetRefreshAfter > now();
+  const finish = async (outcome, body) => {
+    try { checkpoint(outcome); const cache = validate(); Script.setWidget(new WidgetRenderer(prefs, cache).build('large')); }
+    catch (_) { /* Never render another vehicle or overwrite cache after session loss. */ }
+    await this.notify(body);
+    return { outcome, steps, message: body };
+  };
+  let cache;
+  try { cache = validate(); }
+  catch (_) { return finish('blocked', 'Widget refresh stopped because the configured vehicle or app session changed.'); }
+  if (cooling(cache)) return finish('cooldown', 'Widget refresh is cooling down. No cloud read or vehicle request was sent. Showing cached data.');
+
+  const confirmation = new Alert(); confirmation.title = 'Refresh all widget data?';
+  confirmation.message = 'Request vehicle and Pro Power status, then read Ford\'s latest available data. This may wake connected electronics; it does not start or stop the engine or switch outlets. Keep Scriptable open while it finishes. A full refresh can take around a minute, and existing cooldowns apply.';
+  confirmation.addAction('Refresh widget'); confirmation.addCancelAction('Cancel');
+  if (await confirmation.presentAlert() < 0) return { outcome: 'cancelled', steps, message: 'Canceled.' };
+  try {
+    cache = validate();
+    if (cooling(cache)) return finish('cooldown', 'Widget refresh is cooling down. No cloud read or vehicle request was sent. Showing cached data.');
+    // Persist before dispatch; never rewrite this old cache object after an await.
+    attemptAt = now(); cache.widgetRefreshAfter = attemptAt + 60000;
+    cache.widgetRefreshLast = marker('in_progress'); this.store.write(cache);
+  } catch (_) { return finish('blocked', 'Widget refresh stopped before dispatch because the vehicle or app session changed.'); }
+
+  const client = new FordAPIClient(this.auth, this.store, prefs);
+  const mobile = !!secretGet('token.mobile');
+  try {
+    if (mobile) {
+      let generalDispatched = false;
+      try {
+        const general = await client.requestGeneralStatus(true);
+        steps.generalStatus = general && ['device_succeeded', 'device_failed', 'accepted_unconfirmed', 'delivery_uncertain', 'cooldown', 'baseline_unavailable', 'blocked'].includes(general.outcome) ? general.outcome : 'unconfirmed';
+        generalDispatched = !!(general && general.dispatched === true);
+      } catch (_) { steps.generalStatus = 'unconfirmed'; }
+      checkpoint();
+      if (generalDispatched) {
+        // Wait only this run's remaining shared command spacing. Never wait out
+        // a preexisting wake/auth/PPO backoff or retry the general command.
+        const remaining = validate().commandAfter - now();
+        if (remaining > 0 && remaining <= SETTINGS.commandInterval) {
+          await new Promise(resolve => Timer.schedule(remaining, false, resolve));
+          checkpoint();
+        }
+      }
+      try {
+        const result = await client.requestProPowerStatus(true);
+        steps.proPowerRequest = result && ['device_succeeded', 'device_failed', 'accepted_unconfirmed', 'delivery_uncertain'].includes(result.outcome) ? result.outcome : 'unconfirmed';
+      } catch (_) { steps.proPowerRequest = 'unconfirmed_or_cooling_down'; }
+    } else { steps.generalStatus = 'requires_fordpass'; steps.proPowerRequest = 'requires_fordpass'; }
+
+    checkpoint();
+    try {
+      // Read ordinary telemetry after the wake/status attempt. Only the local
+      // nextFetch interval is bypassed; existing authentication gates still apply.
+      const result = await client.getVehicleStatus(true);
+      const note = result && typeof result.note === 'string' ? result.note : '';
+      steps.telemetry = note.startsWith('Cloud telemetry saved.') ? 'saved' :
+        note.startsWith('Some sources failed; available telemetry was saved.') ? 'partial' : 'cached_or_unavailable';
+    } catch (_) { steps.telemetry = 'failed'; }
+
+    checkpoint();
+    if (mobile && steps.proPowerRequest !== 'device_succeeded') {
+      try {
+        const result = await client.readProPower(true);
+        steps.proPowerRead = result && typeof result.note === 'string' && result.note.startsWith('Pro Power cloud cache checked.') ? 'checked' : 'cached_or_unavailable';
+      } catch (_) { steps.proPowerRead = 'failed'; }
+    } else steps.proPowerRead = mobile ? 'already_checked_by_request' : 'requires_fordpass';
+
+    checkpoint();
+    if (widgetOptions(prefs, '').show.parked) {
+      try { await client.updatePlace(); steps.place = 'checked'; }
+      catch (_) { steps.place = 'failed'; }
+    } else steps.place = 'skipped';
+    checkpoint();
+    if ((prefs.imageMode || 'auto') === 'auto' && secretGet('token.mobile')) {
+      try { await client.updateVehicleImage(false); steps.photo = 'checked'; }
+      catch (_) { steps.photo = 'failed'; }
+    } else steps.photo = 'skipped';
+    checkpoint();
+  } catch (_) {
+    return finish('blocked', 'Widget refresh stopped because the configured vehicle or app session changed. Completed portions were kept; remaining portions were not sent.');
+  }
+
+  const lines = ['Widget refresh checked the available sources.'];
+  const generalText = {
+    device_succeeded: 'Ford reports the general vehicle status command succeeded; individual field times may still differ.',
+    device_failed: 'Ford reports the general status request failed, expired or was canceled.',
+    accepted_unconfirmed: 'General vehicle status refresh was accepted; completion is unconfirmed.',
+    delivery_uncertain: 'General vehicle status-refresh delivery is uncertain; it was not retried.',
+    cooldown: 'General vehicle status is cooling down. No new general status request was sent.',
+    baseline_unavailable: 'General vehicle status could not be read before requesting an update. No general status request was sent.',
+    blocked: 'General status refresh stopped because the vehicle or app session changed.',
+    unconfirmed: 'General status-refresh completion is unconfirmed.',
+    requires_fordpass: 'Requesting new vehicle status from the truck requires FordPass.'
+  };
+  lines.push(generalText[steps.generalStatus]);
+  lines.push(steps.telemetry === 'saved' ? 'Vehicle telemetry saved.' : steps.telemetry === 'partial' ?
+    'Available vehicle telemetry saved; some sources failed.' : 'Vehicle telemetry could not be confirmed; cached values were retained.');
+  const proPowerText = {
+    device_succeeded: 'Ford reports the Pro Power status request succeeded on the device.',
+    device_failed: 'Ford reports the Pro Power request failed, expired or was canceled.',
+    accepted_unconfirmed: 'Ford accepted the Pro Power request; device completion is unconfirmed.',
+    delivery_uncertain: 'Pro Power request delivery is uncertain; it was not retried.',
+    requires_fordpass: 'Pro Power requires FordPass; the other connected source was still checked.',
+    unconfirmed: 'Pro Power request completion is unconfirmed.',
+    unconfirmed_or_cooling_down: 'Pro Power status was not confirmed or is cooling down; no command retry was sent.'
+  };
+  lines.push(proPowerText[steps.proPowerRequest]);
+  if (steps.proPowerRead === 'checked') lines.push('The Pro Power cloud cache was checked separately.');
+  else if (['failed', 'cached_or_unavailable'].includes(steps.proPowerRead)) lines.push('The Pro Power cache read was unavailable; saved readings were retained.');
+  if (steps.place === 'failed' || steps.photo === 'failed') lines.push('Location or automatic-photo processing was unavailable; the other results were kept.');
+  lines.push('Readings keep Ford\'s measurement times. Pro Power sample time remains unverified.');
+  return finish('completed', lines.join('\n'));
+};
+const WIDGET_REFRESH_ORIGINAL_ACTION = AppController.prototype.action;
+AppController.prototype.action = async function(action, prefs) {
+  if (action === 'refreshwidget') return this.refreshWidget(prefs);
+  return WIDGET_REFRESH_ORIGINAL_ACTION.call(this, action, prefs);
+};
+
+// Optional reports stay separate from routine vehicle and Pro Power actions.
+function troubleshootingCache(controller, prefs) {
+  requireApp(); controller.store.assertLease();
+  const configured = secretGet('vehicle'), cache = controller.store.read();
+  if (!prefs || !configured || prefs.vin !== configured.vin || !cache || cache.vin !== prefs.vin)
+    throw new Error('Troubleshooting vehicle/session changed.');
+  return cache;
+}
+AppController.prototype.troubleshooting = async function(prefs) {
+  requireApp();
+  for (;;) {
+    troubleshootingCache(this, prefs);
+    const menu = new Alert(); menu.title = 'Troubleshooting';
+    menu.message = 'Optional redacted vehicle reports. Review before sharing: reports still include vehicle states and times. Nothing is uploaded automatically. Pro Power tools use saved data; the vehicle report offers one passive cloud read.';
+    ['Vehicle data report', 'Pro Power raw signals', 'Copy redacted Pro Power report'].forEach(label => menu.addAction(label));
+    menu.addCancelAction('Close');
+    const choice = await menu.presentSheet();
+    const cache = troubleshootingCache(this, prefs);
+    if (choice < 0) return;
+    if (choice === 0) { await this.vehicleStatusDiagnostic(prefs); continue; }
+    const snapshot = ppoSnapshotFor(cache, prefs), request = cache.proPowerRequest || null;
+    const report = ppoRedactedReport(snapshot, request);
+    if (choice === 1) {
+      const lines = ['Pro Power raw signals · last reported', 'Status result: ' + ppoCommandAge(ppoView(snapshot)),
+        ppoRequestLine(request), ppoModeLine(ppoView(snapshot)),
+        'Raw units, enum meanings, sample time and sentinel codes remain unverified.', ''];
+      for (const key of PPO_UI_RAW_KEYS) lines.push(key + ': ' + (Object.prototype.hasOwnProperty.call(report.rawSignals, key) ? report.rawSignals[key] : 'not reported'));
+      await QuickLook.present(lines.join('\n'));
+    } else if (choice === 2) {
+      report.reportVersion = 2;
+      report.previewVersion = FORDWIDGET_PREVIEW_VERSION;
+      report.refreshDiagnostics = widgetDiagnosticContext(cache);
+      const text = JSON.stringify(report, null, 2);
+      const review = new Alert(); review.title = 'Review redacted Pro Power report';
+      review.message = text;
+      review.addAction('Copy report'); review.addCancelAction('Cancel');
+      const selected = await review.presentAlert(); troubleshootingCache(this, prefs);
+      if (selected === 0) { Pasteboard.copyString(text); await message('Pro Power', 'Redacted report copied.'); }
+    }
+  }
+};
+
+// Additional on-device offline checks. No account, cache writes or requests.
+function ppoSelfCheck() {
+  const assert = (ok, label) => { if (!ok) throw new Error('Pro Power self-test failed: ' + label); };
+  const vin = '1FTFW1E50JFA00001', clock = now(), at = Math.floor(clock / 1000) * 1000 - 60000;
+  const fields = { DcacOut1Pw2Dsply: 1450, DcacOut2Pw2Dsply: 0, DcacOutPwDsplyMx: 7200,
+    DcacOutScndPw2Dsply: 0, DcacOutScndPwDsplyMx: 0, DcacOutETot: 200, UnknownPrivateField: 998877 };
+  const raw = { vin, states: { commands: { updatePTTBStatusCommand: {
+    commandId: 'synthetic-private-status', timestamp: new Date(at).toISOString(),
+    value: { toState: 'COMMAND_SUCCEEDED_ON_DEVICE', oemData: {
+      pttbStatusDataV2: { stringValue: JSON.stringify(fields) },
+      vehicle_common_correlation_id: { stringValue: 'synthetic-private-correlation' }
+    } }
+  } } }, events: { customEvents: { 'pttb-power-mode-change-event': {
+    updateTime: new Date(at + 30000).toISOString(), oemData: { current_power_mode: { stringValue: 'Off' } }
+  } } } };
+  const snapshot = ppoNormalize(raw, vin, clock), view = ppoView(snapshot, clock), e = ppoEstimated(snapshot);
+  assert(e.a === 1450 && e.b === 0 && e.total === 1450 && e.capacity === 7200, 'independent A/B/total/capacity');
+  assert(snapshot.rawSignals.DcacOutETot === 200 && e.total !== 1650, 'energy excluded from power');
+  assert(!Object.prototype.hasOwnProperty.call(snapshot.rawSignals, 'UnknownPrivateField'), 'unknown fields withheld');
+  assert(view.stale && view.staleReasons.includes('newer_off_mode') && e.a === 1450, 'newer Off retains last-known load');
+  assert(snapshot.commandAt === at && ppoView(snapshot, clock + 60000).ageSeconds === view.ageSeconds + 60, 'command age advances');
+  const partial = Object.assign({}, snapshot, { rawSignals: Object.assign({}, snapshot.rawSignals) });
+  delete partial.rawSignals.DcacOut2Pw2Dsply;
+  assert(ppoEstimated(partial).b === null && ppoEstimated(partial).total === null, 'missing B stays unknown');
+  partial.rawSignals.DcacOut1Pw2Dsply = 65535;
+  assert(ppoEstimated(partial).a === null, 'out-of-capacity raw code is not wattage');
+  const text = JSON.stringify(ppoRedactedReport(snapshot));
+  assert(!text.includes(vin) && !text.includes('synthetic-private') && !text.includes('998877'), 'copied report redaction');
+  const defaults = widgetOptions({}, '');
+  assert(PPO_UI_METRICS.every(key => defaults.show[key] === false), 'original layouts remain default');
+}
+
+
 function selfTest() {
+  ppoSelfCheck();
   const assert = (condition, label) => { if (!condition) throw new Error('Self-test failed: ' + label); };
   assert(challenge('dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk') === 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', 'RFC 7636 PKCE');
   assert(finite(null) === null && finite('') === null && finite(false) === null, 'missing values');
@@ -1519,6 +2930,7 @@ function selfTest() {
   assert(findImageRef({ data: { imageUrl: 'https://a.ford.com/i.png' } }).url === 'https://a.ford.com/i.png', 'image link in JSON');
 }
 
+// __FORDWIDGET_ENTRY__
 try { await new AppController().run(); }
 catch (e) {
   if (config.runsInWidget) {
