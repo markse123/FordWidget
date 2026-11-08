@@ -27,8 +27,8 @@ AppController.prototype.troubleshooting = async function(prefs) {
       for (const key of PPO_UI_RAW_KEYS) lines.push(key + ': ' + (Object.prototype.hasOwnProperty.call(report.rawSignals, key) ? report.rawSignals[key] : 'not reported'));
       await QuickLook.present(lines.join('\n'));
     } else if (choice === 2) {
-      report.reportVersion = 2;
-      report.previewVersion = FORDWIDGET_PREVIEW_VERSION;
+      report.reportVersion = 3;
+      report.appVersion = FORDWIDGET_VERSION;
       report.refreshDiagnostics = widgetDiagnosticContext(cache);
       const text = JSON.stringify(report, null, 2);
       const review = new Alert(); review.title = 'Review redacted Pro Power report';

@@ -130,8 +130,8 @@ AppController.prototype.vehicleStatusDiagnostic = async function(prefs) {
     if (!report) report = { readOnly: true, before: statusDiagnosticFields(before.fields, clock),
       cachedAfter: statusDiagnosticFields(after.fields, clock), fuel: null };
     report.tool = 'FordWidget vehicle data diagnostic';
-    report.reportVersion = 3;
-    report.previewVersion = FORDWIDGET_PREVIEW_VERSION;
+    report.reportVersion = 4;
+    report.appVersion = FORDWIDGET_VERSION;
     report.cloudReadOutcome = cloudReadOutcome;
     report.refreshDiagnostics = widgetDiagnosticContext(after, clock);
     const text = JSON.stringify(report, null, 2);

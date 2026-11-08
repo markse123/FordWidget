@@ -1,6 +1,6 @@
 # Development
 
-`FordWidget.js` is the generated, installable Scriptable script. The modular inputs and offline tests are in `source/`. Users install the single script; they do not need the build tools.
+`FordWidget.js` is the generated, installable Scriptable script for **FordWidget Pro Power v0.1.7**. The modular inputs and offline tests are in `source/`. Users install the single script; they do not need the build tools.
 
 ## Build and check
 
@@ -10,7 +10,7 @@ From the repository root:
 
 ```sh
 python3 source/build.py
-node source/widget-preview.test.cjs
+node source/widget.test.cjs
 node source/core.test.cjs
 node source/ui.test.cjs
 node source/parser.test.cjs
@@ -29,7 +29,9 @@ Keep upstream fixes separate from optional Pro Power behavior where possible. Up
 
 ## Installation compatibility
 
-Keep the Scriptable script name **FordWidget Pro Power Preview**, Keychain prefix `FordWidget.ProPowerPreview.v1.`, and local folder `FordWidget Pro Power Preview` unchanged when updating an existing preview. These are intentionally separate from upstream FordWidget. Do not copy tokens or caches between scripts.
+New installations use the Scriptable name **FordWidget Pro Power**. Existing installations should replace the script contents and keep their current Scriptable name so existing widgets stay connected. Renaming is optional; if renamed, select the new script name in every widget.
+
+The Keychain prefix `FordWidget.ProPowerPreview.v1.` and local folder `FordWidget Pro Power Preview` are **legacy storage identifiers**, intentionally unchanged for upgrade compatibility. They remain separate from upstream FordWidget. Changing the public product name does not migrate or clear stored data. Do not copy tokens or caches between scripts.
 
 ## Troubleshooting data
 

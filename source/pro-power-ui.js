@@ -106,7 +106,7 @@ function ppoRedactedReport(snapshot, request = null) {
   const mode = view.latestMode || {};
   const modeAt = ppoUIAt(mode.at), commandAt = ppoUIAt(view.commandAt);
   return {
-    tool: 'FordWidget Pro Power preview', reportVersion: 1, rawSignalSchemaVersion: 1,
+    tool: 'FordWidget Pro Power', reportVersion: 1, rawSignalSchemaVersion: 1,
     source: 'pttbStatusDataV2', sourceCommandAgeSeconds: commandAt === null ? null : Math.floor((now() - commandAt) / 1000),
     sourceCommandState: PPO_WIDGET_STATES.has(view.commandState) ? view.commandState : null,
     embeddedSampleAgeSeconds: null, embeddedSampleFreshness: 'unverified',

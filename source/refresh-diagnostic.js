@@ -1,6 +1,6 @@
 // Local metadata only: fixed gate names, fixed cache fields, and no token reads.
 // Missing historical HTTP metadata stays unknown; a gate is not an HTTP trace.
-const FORDWIDGET_PREVIEW_VERSION = '__PREVIEW_VERSION__';
+const FORDWIDGET_VERSION = '__APP_VERSION__';
 const WIDGET_DIAGNOSTIC_GATES = Object.freeze([
   'commands', 'commands.generalStatus', 'commands.proPower', 'telemetry.mobile',
   'telemetry.proPower', 'auth.mobile', 'auth.autonomic'
@@ -84,7 +84,7 @@ function widgetDiagnosticContext(cache, clock = now()) {
     lastFullRefresh = { attemptAgeSeconds: widgetDiagnosticAge(widgetDiagnosticOwn(last, 'attemptAt'), time), outcome, steps };
   }
   return {
-    previewVersion: FORDWIDGET_PREVIEW_VERSION, gates, cooldowns,
+    appVersion: FORDWIDGET_VERSION, gates, cooldowns,
     lastGeneralStatusRequest: widgetDiagnosticRequest(widgetDiagnosticOwn(cache, 'generalStatusRequest'), time),
     lastProPowerStatusRequest: widgetDiagnosticRequest(widgetDiagnosticOwn(cache, 'proPowerRequest'), time),
     cachedProPower: { commandAgeSeconds: widgetDiagnosticAge(widgetDiagnosticOwn(ppo, 'commandAt'), time),

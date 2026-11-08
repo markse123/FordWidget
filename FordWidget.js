@@ -1,7 +1,7 @@
 // Variables used by Scriptable.
 // icon-color: blue; icon-glyph: truck;
 /*
-FordWidget Pro Power Preview 0.1.6
+FordWidget Pro Power 0.1.7
 Derived from rushilpunu/FordWidget, pinned commit 1b129eb6155fa7c0a1d14592be6983366943d31b.
 All original layouts, controls, telemetry, photos and notifications remain available.
 New optional parameters: ppoa ppob ppototal ppocapacity (alias: ppo).
@@ -20,13 +20,13 @@ Power is an estimate at 1 W per decoded unit, corroborated on one 7.2 kW truck.
 Other variants and enum/sentinel mappings still require validation. Every PPO
 view shows last-reported data and command age; embedded sample time is unknown.
 
-This preview uses its own Keychain prefix and cache folder, so it requires its
-own setup/sign-in when moving from upstream. Existing preview users keep the
-same script name and saved setup. Ford tokens use Scriptable's shared Keychain.
+This fork uses its own Keychain prefix and cache folder, so it requires its
+own setup/sign-in when moving from upstream. Existing users keep the same
+script name and saved setup. Ford tokens use Scriptable's shared Keychain.
 The original North American USA sign-in profile is retained. Canada is untested.
 See README.md and docs/USAGE.md before running.
 
-Original license (also applies to this derivative preview):
+Original license (also applies to this derivative):
 MIT License
 
 Copyright (c) 2026 rushilpunu
@@ -54,7 +54,7 @@ SOFTWARE.
 /**
  * FordWidget — single-file Scriptable widget (North American FordPass profile).
  * Official source and instructions: https://github.com/rushilpunu/FordWidget
- * This preview derives from that source. Read the preview notes above and SECURITY & PRIVACY.
+ * This fork derives from that source. Read the notes above and SECURITY & PRIVACY.
  * MIT License, Copyright (c) 2026 rushilpunu. See LICENSE in the repository.
  *
  * SETUP
@@ -123,7 +123,7 @@ SOFTWARE.
  *   estimate (SETTINGS.startMinutes); Ford's remoteStartCountdownTimer replaces it.
  * - Lock Screen widgets: circular (Parameter fuel | lock | tires), rectangular
  *   (status | tires | parked) and inline. A running engine overrides the circle.
- * - Local FordWidget Pro Power Preview/ford_vehicle_cache.json contains normalized telemetry,
+ * - Legacy local storage: FordWidget Pro Power Preview/ford_vehicle_cache.json contains normalized telemetry,
  *   timestamps, cooldowns, and command receipts, never secrets. It holds the
  *   truck's parked coordinates only while "Parked location" is on (Customize).
  *   Keep the filename/directory if updating the script. Cache is device-local.
@@ -979,7 +979,7 @@ function parsePttbStatusV2(raw) {
   };
 }
 
-// FordWidget preview add-on. Original v1 telemetry and control routes stay intact.
+// FordWidget Pro Power add-on. Original v1 telemetry and control routes stay intact.
 // Raw status IDs live only in this WeakMap, never in the file cache or UI text.
 const PPO_WIDGET_SEEN = new WeakMap();
 const PPO_WIDGET_STATES = new Set(('REQUESTED DELIVERY_FROM_TMC_QUEUED OEM_CLOUD_DELIVERY_IN_PROGRESS OEM_CLOUD_PROCESSING_IN_PROGRESS DELIVERY_FROM_OEM_CLOUD_QUEUED DEVICE_DELIVERY_IN_PROGRESS RECEIVED_BY_DEVICE DEVICE_COMMAND_VALIDATION_IN_PROGRESS COMMAND_IN_PROGRESS_ON_DEVICE COMMAND_FINISHED_ON_DEVICE COMMAND_SUCCEEDED_ON_DEVICE COMMAND_DELIVERY_FAILURE DEVICE_COMMAND_VALIDATION_FAILURE DEVICE_RESPONSE_PROCESSING_FAILURE COMMAND_FAILED_ON_DEVICE RETRIABLE_COMMAND_DELIVERY_FAILURE EXPIRED CANCELLED').split(' '));
@@ -1739,7 +1739,7 @@ class AppController {
       if (!prefs) return;
       const action = args.queryParameters.action;
       if (action) { await this.action(action, prefs); return; }
-      const menu = new Alert(); menu.title = prefs.name + ' · ' + FORDWIDGET_PREVIEW_VERSION; menu.message = 'Telemetry reads do not wake the truck. Refresh sends an explicit wake request.';
+      const menu = new Alert(); menu.title = prefs.name + ' · ' + FORDWIDGET_VERSION; menu.message = 'Telemetry reads do not wake the truck. Refresh sends an explicit wake request.';
       const items = [
         ['Fetch telemetry', () => this.action('fetch', prefs)],
         ['Lock', () => this.action('lock', prefs)],
@@ -1883,7 +1883,7 @@ function ppoRedactedReport(snapshot, request = null) {
   const mode = view.latestMode || {};
   const modeAt = ppoUIAt(mode.at), commandAt = ppoUIAt(view.commandAt);
   return {
-    tool: 'FordWidget Pro Power preview', reportVersion: 1, rawSignalSchemaVersion: 1,
+    tool: 'FordWidget Pro Power', reportVersion: 1, rawSignalSchemaVersion: 1,
     source: 'pttbStatusDataV2', sourceCommandAgeSeconds: commandAt === null ? null : Math.floor((now() - commandAt) / 1000),
     sourceCommandState: PPO_WIDGET_STATES.has(view.commandState) ? view.commandState : null,
     embeddedSampleAgeSeconds: null, embeddedSampleFreshness: 'unverified',
@@ -2245,7 +2245,7 @@ WidgetRenderer.prototype.build = function(family = 'medium', notice = '') {
 
 // Local metadata only: fixed gate names, fixed cache fields, and no token reads.
 // Missing historical HTTP metadata stays unknown; a gate is not an HTTP trace.
-const FORDWIDGET_PREVIEW_VERSION = '0.1.6';
+const FORDWIDGET_VERSION = '0.1.7';
 const WIDGET_DIAGNOSTIC_GATES = Object.freeze([
   'commands', 'commands.generalStatus', 'commands.proPower', 'telemetry.mobile',
   'telemetry.proPower', 'auth.mobile', 'auth.autonomic'
@@ -2329,7 +2329,7 @@ function widgetDiagnosticContext(cache, clock = now()) {
     lastFullRefresh = { attemptAgeSeconds: widgetDiagnosticAge(widgetDiagnosticOwn(last, 'attemptAt'), time), outcome, steps };
   }
   return {
-    previewVersion: FORDWIDGET_PREVIEW_VERSION, gates, cooldowns,
+    appVersion: FORDWIDGET_VERSION, gates, cooldowns,
     lastGeneralStatusRequest: widgetDiagnosticRequest(widgetDiagnosticOwn(cache, 'generalStatusRequest'), time),
     lastProPowerStatusRequest: widgetDiagnosticRequest(widgetDiagnosticOwn(cache, 'proPowerRequest'), time),
     cachedProPower: { commandAgeSeconds: widgetDiagnosticAge(widgetDiagnosticOwn(ppo, 'commandAt'), time),
@@ -2524,8 +2524,8 @@ AppController.prototype.vehicleStatusDiagnostic = async function(prefs) {
     if (!report) report = { readOnly: true, before: statusDiagnosticFields(before.fields, clock),
       cachedAfter: statusDiagnosticFields(after.fields, clock), fuel: null };
     report.tool = 'FordWidget vehicle data diagnostic';
-    report.reportVersion = 3;
-    report.previewVersion = FORDWIDGET_PREVIEW_VERSION;
+    report.reportVersion = 4;
+    report.appVersion = FORDWIDGET_VERSION;
     report.cloudReadOutcome = cloudReadOutcome;
     report.refreshDiagnostics = widgetDiagnosticContext(after, clock);
     const text = JSON.stringify(report, null, 2);
@@ -2826,8 +2826,8 @@ AppController.prototype.troubleshooting = async function(prefs) {
       for (const key of PPO_UI_RAW_KEYS) lines.push(key + ': ' + (Object.prototype.hasOwnProperty.call(report.rawSignals, key) ? report.rawSignals[key] : 'not reported'));
       await QuickLook.present(lines.join('\n'));
     } else if (choice === 2) {
-      report.reportVersion = 2;
-      report.previewVersion = FORDWIDGET_PREVIEW_VERSION;
+      report.reportVersion = 3;
+      report.appVersion = FORDWIDGET_VERSION;
       report.refreshDiagnostics = widgetDiagnosticContext(cache);
       const text = JSON.stringify(report, null, 2);
       const review = new Alert(); review.title = 'Review redacted Pro Power report';

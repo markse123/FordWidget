@@ -1,13 +1,13 @@
-# FordWidget Pro Power Preview — usage
+# FordWidget Pro Power — usage
 
-These instructions describe **v0.1.6** of [markse123/FordWidget](https://github.com/markse123/FordWidget), derived from [rushilpunu/FordWidget](https://github.com/rushilpunu/FordWidget). The complete original widget remains available, with optional Pro Power monitoring added.
+These instructions describe **v0.1.7** of [markse123/FordWidget](https://github.com/markse123/FordWidget), derived from [rushilpunu/FordWidget](https://github.com/rushilpunu/FordWidget). The complete original widget remains available, with optional Pro Power monitoring added.
 
 ## Install and connect
 
 You need an iPhone with Scriptable, a FordPass account authorized for the vehicle, and an activated vehicle modem. Feature availability depends on the vehicle and account. US sign-in has been tested; Canada has not.
 
 1. Open [FordWidget.js](https://raw.githubusercontent.com/markse123/FordWidget/main/FordWidget.js) and copy all its contents.
-2. In Scriptable, create a script, paste the code and name it **FordWidget Pro Power Preview**.
+2. In Scriptable, create a script, paste the code and name it **FordWidget Pro Power**.
 3. Run it inside Scriptable. Enter your VIN and a vehicle name locally.
 4. Choose **Connect FordPass**. Complete Ford sign-in and any verification. The optional password field can stay blank so you enter the password directly on Ford's page. Close the sign-in window when it finishes.
 5. Run the script again and choose **Fetch telemetry**. FordConnect is optional; its separate setup requires an approved Ford developer application.
@@ -18,7 +18,7 @@ No running engine or electrical load is needed for installation or a cached read
 ## Add the widget
 
 1. Add a **Scriptable** widget to your Home Screen and choose a size.
-2. Edit the widget and select **FordWidget Pro Power Preview**.
+2. Edit the widget and select **FordWidget Pro Power**.
 3. Set **When Interacting → Run Script**.
 4. Leave **Parameter blank** to follow **Customize widgets**.
 
@@ -103,22 +103,24 @@ There are no outlet or Generator Mode controls in this version. The Lock, Unlock
 
 iOS decides when Home Screen widgets redraw. The script requests an update after actions, but the displayed widget may lag the app's saved data. Evening checks retain the original read-only behavior and also depend on iOS scheduling.
 
-## Update an existing preview
+## Update an existing installation
 
-Replace the contents of **FordWidget Pro Power Preview** with the new script and save it under the same name. Run it and check the version in the main-menu title. Preview versions keep the same Keychain namespace and cache folder, preserving preview sign-in, settings and saved data.
+Replace the contents of your existing script and **keep its current Scriptable name**. Run it and check the version in the main-menu title. The Keychain namespace and cache folder remain unchanged, preserving sign-in, settings and saved data.
 
-The preview is isolated from the original FordWidget. Installing it for the first time requires a separate sign-in; it does not import the original's cache or settings. Keep the original script if you want both available. After updating, preview your chosen size in **Customize widgets** and allow iOS to redraw the Home Screen copy.
+The public name is now **FordWidget Pro Power**. Renaming an existing script is optional. If you rename it, edit every Home Screen and Lock Screen widget to select the new script name, then preview the desired size in **Customize widgets**. Allow iOS to redraw the Home Screen copy.
+
+This fork is isolated from the original FordWidget. Installing it for the first time requires a separate sign-in; it does not import the original's cache or settings. Keep the original script if you want both available.
 
 ## Troubleshooting
 
 - **Only Pro Power appears:** clear the widget's Parameter, then enable the desired original and Pro Power fields in Customize widgets. A Parameter such as `ppob` deliberately selects only that field.
 - **Readings disagree with the truck:** compare individual source times in View details, run Fetch telemetry and compare again. Reports captured at different times are not equivalent comparisons. Use combined Refresh when a new status request is needed, respecting cooldowns.
 - **A successful request still shows an old reading:** check the field's measurement time and the Pro Power Status result separately. Request completion does not guarantee a new sample.
-- **Fuel was unavailable in an earlier version:** update to v0.1.6 and Fetch telemetry. Ford can report above 100%; the fuel-only fix caps the displayed percentage at 100 and retains the raw reading. Negative or invalid values remain unknown.
+- **Fuel was unavailable in an earlier version:** update to v0.1.7 and Fetch telemetry. Ford can report above 100%; the fuel-only fix caps the displayed percentage at 100 and retains the raw reading. Negative or invalid values remain unknown.
 - **Cooling down:** wait for the indicated interval. Do not clear cooldowns or repeatedly send commands.
 - **“Already running”:** take over only if the earlier Scriptable run has actually stopped.
 - **App data changed but the widget did not:** verify the selected script and Run Script interaction setting, preview the size in Scriptable, and allow iOS to redraw it.
-- **Refresh only opens Scriptable without the confirmation:** confirm that the widget selects the updated preview script and that **When Interacting** is **Run Script**. This intermittent behavior has been observed; a later tap reached the correct prompt, but its cause has not been established. For a Pro Power-only check, open the script's **Pro Power → Request status once…** action directly. If it recurs, note whether Scriptable shows its scripts list or the script's menu, plus the installed preview version.
+- **Refresh only opens Scriptable without the confirmation:** confirm that the widget selects the updated script and that **When Interacting** is **Run Script**. This intermittent behavior has been observed; a later tap reached the correct prompt, but its cause has not been established. For a Pro Power-only check, open the script's **Pro Power → Request status once…** action directly. If it recurs, note whether Scriptable shows its scripts list or the script's menu, plus the installed version.
 
 If these checks do not explain the issue, open **Troubleshooting → Vehicle data report** from the main menu. Choose **Preview report** or **Copy report**. It attempts one passive cloud read and compares relevant raw values with the saved cache and hypothetical normalization/merge results; it does not update saved vehicle telemetry or send a vehicle command. A safe cached report remains available if the read fails. **Troubleshooting → Copy redacted Pro Power report** uses saved data without a cloud read.
 
@@ -126,11 +128,11 @@ Inspect reports before sharing. Reports still contain vehicle states and timesta
 
 ## Privacy and license
 
-Passwords are not saved. Ford tokens and the username use Scriptable's shared Keychain; other installed scripts may access it. The preview's device-local cache uses **FordWidget Pro Power Preview/ford_vehicle_cache.json** and can retain parked coordinates while that feature is enabled. **Sign out of Ford** removes saved credentials/tokens, while telemetry, photos and widget settings remain.
+Passwords are not saved. Ford tokens and the username use Scriptable's shared Keychain; other installed scripts may access it. The device-local cache keeps the **legacy storage identifier** `FordWidget Pro Power Preview/ford_vehicle_cache.json` for upgrade compatibility and can retain parked coordinates while that feature is enabled. **Sign out of Ford** removes saved credentials/tokens, while telemetry, photos and widget settings remain.
 
 The retained remote-start weather fallback can query Open-Meteo with an approximately 1 km-rounded vehicle location when the truck's own temperature reading is old. It sends no Ford account or token. Location labels use the device's reverse geocoder. Troubleshooting reports are never automatically uploaded.
 
-To uninstall, sign out, delete the script and widgets, and remove the **FordWidget Pro Power Preview** folder from Scriptable's local documents if you also want to remove saved telemetry and photos.
+To uninstall, sign out, delete the script and widgets, and remove the folder with the **legacy storage identifier** `FordWidget Pro Power Preview` from Scriptable's local documents if you also want to remove saved telemetry and photos.
 
 This unofficial client depends on private Ford APIs and compatible, authorized vehicle services. Availability may change. Use engine start only with the vehicle safely parked outdoors.
 

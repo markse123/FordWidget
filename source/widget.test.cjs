@@ -9,10 +9,10 @@ const { test } = require('node:test');
 
 const root = path.resolve(__dirname, '..');
 const baselineSource = fs.readFileSync(path.join(__dirname, 'FordWidget.upstream.js'), 'utf8');
-const previewPath = process.argv[2] || process.env.FORDWIDGET_PREVIEW || path.join(root, 'FordWidget.js');
-const previewSource = fs.readFileSync(previewPath, 'utf8');
+const widgetPath = process.argv[2] || process.env.FORDWIDGET_SCRIPT || path.join(root, 'FordWidget.js');
+const widgetSource = fs.readFileSync(widgetPath, 'utf8');
 const entryMarker = '// __FORDWIDGET_ENTRY__';
-assert.ok(previewSource.includes(entryMarker), 'The preview must expose its offline entry boundary');
+assert.ok(widgetSource.includes(entryMarker), 'The widget must expose its offline entry boundary');
 const VIN = '1FTFW1E50JFA00001'; // Synthetic test vehicle, never used on a network.
 const TIME = Date.parse('2026-11-08T14:00:00.000Z');
 const families = ['small', 'medium', 'large', 'accessoryCircular', 'accessoryRectangular', 'accessoryInline'];
@@ -147,7 +147,7 @@ function scriptable(source, baseline = false) {
   assert.ok(boundary > 0);
   const expose = '\nglobalThis.TestAPI = {' + names.map(n => n + ': typeof ' + n + " === 'undefined' ? undefined : " + n).join(',') + '};';
   const context = vm.createContext(sandbox);
-  new vm.Script(source.slice(0, boundary) + expose, { filename: baseline ? 'FordWidget.upstream.js' : 'FordWidget Pro Power Preview.js' }).runInContext(context);
+  new vm.Script(source.slice(0, boundary) + expose, { filename: baseline ? 'FordWidget.upstream.js' : 'FordWidget Pro Power.js' }).runInContext(context);
   return { api: context.TestAPI, state, config, args, context, fm };
 }
 
@@ -227,12 +227,12 @@ test('pinned original source remains the exact reviewed upstream byte copy', () 
   assert.equal(crypto.createHash('sha256').update(baselineSource).digest('hex'), '2b3502240739b036746c3ad42a247c40e7c0de2ef1612789f60c8125dcfde2a6');
 });
 
-test('original and preview built-in offline self-tests both pass without network', () => {
-  for (const h of [scriptable(baselineSource, true), scriptable(previewSource)]) { h.api.selfTest(); assert.equal(h.state.requests.length, 0); }
+test('original and current built-in offline self-tests both pass without network', () => {
+  for (const h of [scriptable(baselineSource, true), scriptable(widgetSource)]) { h.api.selfTest(); assert.equal(h.state.requests.length, 0); }
 });
 
-test('original field names, commands and v1 endpoints remain unchanged; preview storage is isolated', () => {
-  const b = scriptable(baselineSource, true), p = scriptable(previewSource);
+test('original field names, commands and v1 endpoints remain unchanged; add-on storage is isolated', () => {
+  const b = scriptable(baselineSource, true), p = scriptable(widgetSource);
   assert.deepEqual(plain(p.api.COMMANDS), plain(b.api.COMMANDS));
   assert.deepEqual(plain(p.api.FIELD_NAMES), plain(b.api.FIELD_NAMES));
   assert.deepEqual(plain(p.api.SETTINGS), plain(b.api.SETTINGS));
@@ -243,8 +243,40 @@ test('original field names, commands and v1 endpoints remain unchanged; preview 
   for (const key of ['ppoa', 'ppob', 'ppototal', 'ppocapacity']) assert.equal(p.api.widgetOptions(prefs(), '').show[key], false);
 });
 
+test('the renamed app reuses existing preferences, sign-in tokens, photo and telemetry cache from the exact legacy storage locations', async () => {
+  const h = scriptable(widgetSource), prefix = 'FordWidget.ProPowerPreview.v1.';
+  const directory = '/mock/documents/FordWidget Pro Power Preview';
+  const vehicle = prefs({ imageMode: 'custom', widget: { show: { fuel: true, ppob: true } } });
+  const tokens = { mobile: { access: 'synthetic-existing-mobile', refresh: 'synthetic-existing-mobile-refresh', expires: TIME + 3600000 },
+    autonomic: { access: 'synthetic-existing-autonomic', refresh: null, expires: TIME + 3600000 } };
+  const saved = cache({ nextFetch: TIME + 900000, proPower: ppoSnapshot({ DcacOut1Pw2Dsply: 500, DcacOut2Pw2Dsply: 0, DcacOutPwDsplyMx: 7200 }) });
+  h.state.secrets.set(prefix + 'vehicle', JSON.stringify(vehicle));
+  for (const [name, token] of Object.entries(tokens)) h.state.secrets.set(prefix + 'token.' + name, JSON.stringify(token));
+  h.state.files.set(directory, { directory: true });
+  h.state.files.set(directory + '/ford_vehicle_cache.json', JSON.stringify(saved));
+  const photo = { kind: 'synthetic-existing-photo', size: { width: 640, height: 320 } };
+  h.state.files.set(directory + '/vehicle_' + VIN + '_custom.png', photo);
+  const secrets = Array.from(h.state.secrets), cacheText = h.state.files.get(directory + '/ford_vehicle_cache.json');
+  const app = new h.api.AppController();
+  assert.equal(h.api.secretKey('vehicle'), prefix + 'vehicle'); assert.equal(app.store.dir, directory);
+  const restored = h.api.secretGet('vehicle'); assert.deepEqual(plain(restored), vehicle);
+  assert.equal(h.api.widgetOptions(restored, '').show.ppob, true); assert.equal(h.api.widgetOptions(restored, '').show.fuel, true);
+  assert.deepEqual(plain(app.store.read()), saved); assert.deepEqual(plain(app.store.vehicleImage(restored)), photo);
+  await app.store.acquire();
+  for (const [name, token] of Object.entries(tokens)) assert.equal(await app.auth.token(name), token.access, 'Existing sign-in must not require reauthentication after a display-name change');
+  const client = new h.api.FordAPIClient(app.auth, app.store, restored);
+  const result = await client.getVehicleStatus(); assert.equal(result.cache.proPower.rawSignals.DcacOut2Pw2Dsply, 0);
+  const b = scriptable(baselineSource, true);
+  assert.deepEqual(plain(h.api.COMMANDS), plain(b.api.COMMANDS));
+  assert.equal(h.state.requests.length, 0); assert.equal(h.state.safari.length, 0); assert.equal(h.state.alerts.length, 0);
+  assert.deepEqual(Array.from(h.state.secrets), secrets); assert.equal(h.state.files.get(app.store.path), cacheText);
+  assert.match(widgetSource.slice(0, 150), /FordWidget Pro Power 0\.1\.7/);
+  assert.doesNotMatch(widgetSource.slice(0, 150), /FordWidget Pro Power Preview/);
+  app.store.release();
+});
+
 test('original source changes remain limited to the approved refresh, observation and fuel edits', () => {
-  const b = scriptable(baselineSource, true).api, p = scriptable(previewSource).api;
+  const b = scriptable(baselineSource, true).api, p = scriptable(widgetSource).api;
   const excluded = { WidgetRenderer: new Set(['build', 'buttons']), FordAuthManager: new Set(['backoff']), FordAPIClient: new Set(['getVehicleStatus']), AppController: new Set(['action', 'run']) };
   for (const name of ['LocalStore', 'FordAuthManager', 'FordAPIClient', 'WidgetRenderer', 'AppController']) {
     for (const method of Object.getOwnPropertyNames(b[name].prototype)) {
@@ -271,7 +303,7 @@ test('original source changes remain limited to the approved refresh, observatio
 for (const family of families) {
   test('PPO-disabled ' + family + ' render matches the complete original tree', () => {
     for (const variant of ['parked', 'running', 'missing']) {
-      const b = scriptable(baselineSource, true), p = scriptable(previewSource);
+      const b = scriptable(baselineSource, true), p = scriptable(widgetSource);
       const c = variant === 'missing' ? { version: 1, vin: VIN, fields: {} } : cache();
       c.proPower = ppoSnapshot({ DcacOut1Pw2Dsply: 1500, DcacOut2Pw2Dsply: 0, DcacOutPwDsplyMx: 7200 });
       if (variant === 'running') c.fields.remoteStart = { value: { until: TIME + 120000 }, at: TIME - 1000, source: 'FordPass' };
@@ -285,7 +317,7 @@ for (const family of families) {
 
 test('PPO-disabled custom-photo controls and alternate accessory views retain original rendering', () => {
   for (const [family, parameter] of [['medium', 'controls'], ['large', 'status'], ['accessoryCircular', 'lock'], ['accessoryCircular', 'tires'], ['accessoryRectangular', 'parked'], ['accessoryRectangular', 'tires']]) {
-    const b = scriptable(baselineSource, true), p = scriptable(previewSource), vehicle = prefs({ imageMode: 'custom' });
+    const b = scriptable(baselineSource, true), p = scriptable(widgetSource), vehicle = prefs({ imageMode: 'custom' });
     for (const h of [b, p]) { const store = new h.api.LocalStore(); h.state.files.set(store.imagePath(VIN, true), { kind: 'synthetic-photo', size: { width: 640, height: 320 } }); }
     assert.deepEqual(normalizeRefreshButtonRoute(new p.api.WidgetRenderer(vehicle, cache(), parameter).build(family)), plain(new b.api.WidgetRenderer(vehicle, cache(), parameter).build(family)), family + '/' + parameter);
   }
@@ -297,7 +329,7 @@ test('PPO-disabled custom-photo controls and alternate accessory views retain or
 for (const family of ['small', 'medium', 'large']) {
   test('global mixed Customize selection with blank Parameter adds PPO to the original ' + family, () => {
     for (const selected of [['ppoa'], ['ppoa', 'ppob', 'ppototal', 'ppocapacity']]) for (const running of [false, true]) {
-      const b = scriptable(baselineSource, true), p = scriptable(previewSource);
+      const b = scriptable(baselineSource, true), p = scriptable(widgetSource);
       const originalShow = Object.fromEntries(Object.keys(b.api.METRICS).map(key => [key, true]));
       const mixedShow = Object.assign({}, originalShow, Object.fromEntries(selected.map(key => [key, true])));
       const basePrefs = prefs({ imageMode: 'custom', widget: { show: originalShow } });
@@ -329,7 +361,7 @@ for (const family of ['small', 'medium', 'large']) {
       for (const key of selected) assert.match(summary.join(' '), expectedValues[key], 'The compact summary must retain selected field ' + key);
       for (const [key, value] of Object.entries(before)) { assert.equal(renderer[key], value.fn, 'Temporary ' + key + ' hook leaked'); assert.equal(Object.hasOwn(renderer, key), value.own); }
       for (const key of selected) renderer.opts.show[key] = false;
-      assert.deepEqual(normalizeRefreshButtonRoute(renderer.build(family)), plain(original), 'A later PPO-disabled preview must return to the unchanged original rendering');
+      assert.deepEqual(normalizeRefreshButtonRoute(renderer.build(family)), plain(original), 'A later PPO-disabled widget must return to the unchanged original rendering');
       assert.equal(p.state.requests.length, 0);
     }
   });
@@ -337,7 +369,7 @@ for (const family of ['small', 'medium', 'large']) {
 
 test('mixed medium controls and large controls keep the original vehicle grid once', () => {
   for (const family of ['medium', 'large']) {
-    const b = scriptable(baselineSource, true), p = scriptable(previewSource);
+    const b = scriptable(baselineSource, true), p = scriptable(widgetSource);
     const basePrefs = prefs({ imageMode: 'custom', widget: { medium: 'controls' } });
     const mixedPrefs = prefs({ imageMode: 'custom', widget: { medium: 'controls', show: { ppoa: true, ppob: true, ppototal: true, ppocapacity: true } } });
     const c = cache({ proPower: ppoSnapshot({ DcacOut1Pw2Dsply: 1500, DcacOut2Pw2Dsply: 0, DcacOutPwDsplyMx: 7200 }) });
@@ -352,7 +384,7 @@ test('mixed medium controls and large controls keep the original vehicle grid on
 
 test('approved mixed large dashboard retains all vehicle data and puts selected two-column PPO cards before the bottom controls', () => {
   for (const family of ['large', 'extraLarge']) for (const running of [false, true]) {
-    const b = scriptable(baselineSource, true), p = scriptable(previewSource);
+    const b = scriptable(baselineSource, true), p = scriptable(widgetSource);
     const vehicle = prefs({ imageMode: 'custom', widget: { show: { ppoa: true, ppob: true, ppototal: true, ppocapacity: true } } });
     const c = cache({ proPower: ppoSnapshot({ DcacOut1Pw2Dsply: 1500, DcacOut2Pw2Dsply: 0,
       DcacOutPwDsplyMx: 7200, DcacOutScndPw2Dsply: 0, DcacOutScndPwDsplyMx: 0 }) });
@@ -390,7 +422,7 @@ test('approved mixed large dashboard retains all vehicle data and puts selected 
 });
 
 test('large dashboard dates lock and door readings separately and never draws a full-looking unknown-fuel gauge', () => {
-  const h = scriptable(previewSource), c = cache({ proPower: ppoSnapshot({ DcacOut1Pw2Dsply: 1500, DcacOut2Pw2Dsply: 0, DcacOutPwDsplyMx: 7200 }) });
+  const h = scriptable(widgetSource), c = cache({ proPower: ppoSnapshot({ DcacOut1Pw2Dsply: 1500, DcacOut2Pw2Dsply: 0, DcacOutPwDsplyMx: 7200 }) });
   c.fields.lock = { value: 'Unlocked', at: TIME - 3600000, source: 'FordPass' };
   c.fields.doors = { value: 'Ajar', at: TIME - 7200000, source: 'FordPass' };
   const vehicle = prefs({ widget: { show: { ppoa: true } } });
@@ -421,7 +453,7 @@ test('large dashboard dates lock and door readings separately and never draws a 
 });
 
 test('the new dashboard delegates small, medium, pure PPO, accessory and PPO-disabled views unchanged', () => {
-  const h = scriptable(previewSource), mixed = prefs({ widget: { show: { ppoa: true, ppob: true } } });
+  const h = scriptable(widgetSource), mixed = prefs({ widget: { show: { ppoa: true, ppob: true } } });
   const c = cache({ proPower: ppoSnapshot({ DcacOut1Pw2Dsply: 1500, DcacOut2Pw2Dsply: 0, DcacOutPwDsplyMx: 7200 }) });
   const cases = [['small', mixed, ''], ['medium', mixed, ''], ['large', prefs(), ''], ['extraLarge', prefs(), ''],
     ['large', mixed, 'ppoa'], ['extraLarge', mixed, 'ppob'], ...families.filter(family => family.startsWith('accessory')).flatMap(family => [[family, mixed, ''], [family, mixed, 'ppoa']])];
@@ -434,7 +466,7 @@ test('the new dashboard delegates small, medium, pure PPO, accessory and PPO-dis
 });
 
 test('positive PPO-only parameters remain distinct from global mixed Customize defaults', () => {
-  const h = scriptable(previewSource), vehicle = prefs({ widget: { show: { ppob: true } } });
+  const h = scriptable(widgetSource), vehicle = prefs({ widget: { show: { ppob: true } } });
   const saved = h.api.widgetOptions(vehicle, '');
   assert.equal(saved.show.fuel, true); assert.equal(saved.show.photo, true); assert.equal(saved.show.ppob, true);
   const onlyB = h.api.widgetOptions(vehicle, 'ppob');
@@ -455,7 +487,7 @@ test('positive PPO-only parameters remain distinct from global mixed Customize d
 
 test('global mixed PPO preferences do not change existing accessory views or first-view semantics', () => {
   for (const family of families.filter(value => value.startsWith('accessory'))) for (const parameter of ['', 'fuel ppob', 'lock ppob', 'tires ppob', 'parked ppob']) {
-    const b = scriptable(baselineSource, true), p = scriptable(previewSource);
+    const b = scriptable(baselineSource, true), p = scriptable(widgetSource);
     const vehicle = prefs({ widget: { show: { ppoa: true, ppob: true, ppototal: true, ppocapacity: true } } });
     const c = cache({ proPower: ppoSnapshot({ DcacOut1Pw2Dsply: 1500, DcacOut2Pw2Dsply: 0, DcacOutPwDsplyMx: 7200 }) });
     assert.deepEqual(normalizeRefreshButtonRoute(new p.api.WidgetRenderer(vehicle, c, parameter).build(family)), plain(new b.api.WidgetRenderer(vehicle, c, parameter).build(family)), family + '/' + parameter);
@@ -464,7 +496,7 @@ test('global mixed PPO preferences do not change existing accessory views or fir
 
 test('mixed-render helper overrides are restored even when the original render throws', () => {
   for (const family of ['medium', 'large']) {
-    const h = scriptable(previewSource), renderer = new h.api.WidgetRenderer(prefs({ widget: { show: { ppoa: true } } }), cache(), '');
+    const h = scriptable(widgetSource), renderer = new h.api.WidgetRenderer(prefs({ widget: { show: { ppoa: true } } }), cache(), '');
     renderer.truck = () => { throw new Error('Synthetic native rendering failure'); };
     const before = Object.fromEntries(['text', 'buttons', 'truck', 'symbol', 'frame', 'pill', 'tires', '_ppoBeforeFooter'].map(key => [key, { fn: renderer[key], own: Object.hasOwn(renderer, key) }]));
     assert.throws(() => renderer.build(family), /Synthetic native rendering failure/);
@@ -474,7 +506,7 @@ test('mixed-render helper overrides are restored even when the original render t
 
 test('mixed PPO summary is inserted before an arbitrary original footer notice without replacing it', () => {
   for (const family of ['small', 'medium', 'large']) {
-    const b = scriptable(baselineSource, true), p = scriptable(previewSource);
+    const b = scriptable(baselineSource, true), p = scriptable(widgetSource);
     const note = 'Synthetic source unavailable notice';
     const vehicle = prefs({ widget: { show: { ppoa: true } } });
     const c = cache({ proPower: ppoSnapshot({ DcacOut1Pw2Dsply: 1500, DcacOut2Pw2Dsply: 0, DcacOutPwDsplyMx: 7200 }) });
@@ -490,7 +522,7 @@ test('mixed PPO summary is inserted before an arbitrary original footer notice w
 
 test('legacy vehicle commands still delegate through the augmented foreground action', async () => {
   for (const action of ['lock', 'unlock', 'start', 'stop', 'refresh']) {
-    const h = scriptable(previewSource), app = await prepared(h), sent = [];
+    const h = scriptable(widgetSource), app = await prepared(h), sent = [];
     h.api.FordAPIClient.prototype.sendCommand = async (vin, command) => { sent.push({ vin, command }); return 'Synthetic confirmation'; };
     h.state.choices.push(0);
     await app.action(action, prefs());
@@ -503,7 +535,7 @@ test('legacy vehicle commands still delegate through the augmented foreground ac
 });
 
 test('legacy lock command retains its original v1 wire format', async () => {
-  const h = scriptable(previewSource), app = await prepared(h);
+  const h = scriptable(widgetSource), app = await prepared(h);
   h.state.responses.push({ body: { id: 'synthetic-lock-receipt', status: 'accepted' } });
   const api = new h.api.FordAPIClient(app.auth, app.store, prefs());
   await api.postCommand(VIN, 'lock', 'synthetic-autonomic');
@@ -515,7 +547,7 @@ test('legacy lock command retains its original v1 wire format', async () => {
 });
 
 test('canceling the Pro Power status confirmation sends no request', async () => {
-  const h = scriptable(previewSource), app = await prepared(h);
+  const h = scriptable(widgetSource), app = await prepared(h);
   h.state.choices.push(-1);
   await app.action('ppostatus', prefs());
   assert.equal(h.state.requests.length, 0);
@@ -524,7 +556,7 @@ test('canceling the Pro Power status confirmation sends no request', async () =>
 });
 
 test('a Pro Power status deep link still requires the foreground confirmation', async () => {
-  const h = scriptable(previewSource), app = await prepared(h); app.store.release();
+  const h = scriptable(widgetSource), app = await prepared(h); app.store.release();
   h.args.queryParameters.action = 'ppostatus'; h.state.choices.push(-1);
   await app.run();
   assert.equal(h.state.requests.length, 0);
@@ -533,7 +565,7 @@ test('a Pro Power status deep link still requires the foreground confirmation', 
 
 test('PPO widget rendering with evening checks off sends no commands or network requests', async () => {
   for (const family of families) for (const action of ['ppostatus', 'refreshwidget']) {
-    const h = scriptable(previewSource), vehicle = prefs({ widget: { show: { ppoa: true } } });
+    const h = scriptable(widgetSource), vehicle = prefs({ widget: { show: { ppoa: true } } });
     const c = cache({ proPower: ppoSnapshot({ DcacOut1Pw2Dsply: 1500, DcacOut2Pw2Dsply: 0, DcacOutPwDsplyMx: 7200 }) });
     const app = await prepared(h, vehicle, c); app.store.release();
     h.config.runsInApp = false; h.config.runsInWidget = true; h.config.widgetFamily = family;
@@ -545,7 +577,7 @@ test('PPO widget rendering with evening checks off sends no commands or network 
 });
 
 test('a failed original telemetry read still permits the independent foreground PPO cache read', async () => {
-  const h = scriptable(previewSource), app = await prepared(h);
+  const h = scriptable(widgetSource), app = await prepared(h);
   h.state.responses.push({ status: 503, body: {} }, { body: commandFrame({ DcacOut1Pw2Dsply: 1500, DcacOut2Pw2Dsply: 0, DcacOutPwDsplyMx: 7200 }) });
   await app.action('fetch', prefs());
   assert.equal(h.state.requests.length, 2);
@@ -561,7 +593,7 @@ test('a failed original telemetry read still permits the independent foreground 
 });
 
 test('unsupported PPO endpoint backoff does not disable original vehicle controls', async () => {
-  const h = scriptable(previewSource), app = await prepared(h);
+  const h = scriptable(widgetSource), app = await prepared(h);
   const api = new h.api.FordAPIClient(app.auth, app.store, prefs());
   h.state.responses.push(
     { body: commandFrame({ DcacOut1Pw2Dsply: 1500, DcacOut2Pw2Dsply: 0, DcacOutPwDsplyMx: 7200 }) },
@@ -585,7 +617,7 @@ test('unsupported PPO endpoint backoff does not disable original vehicle control
 });
 
 test('estimates preserve zero and reject missing B, sentinel values and energy-as-power', () => {
-  const h = scriptable(previewSource), estimate = raw => h.api.ppoEstimated(ppoSnapshot(raw));
+  const h = scriptable(widgetSource), estimate = raw => h.api.ppoEstimated(ppoSnapshot(raw));
   const rated = { DcacOutPwDsplyMx: 7200, DcacOutScndPw2Dsply: 0, DcacOutScndPwDsplyMx: 0 };
   const zero = estimate({ ...rated, DcacOut1Pw2Dsply: 0, DcacOut2Pw2Dsply: 0 });
   assert.equal(zero.a, 0); assert.equal(zero.b, 0); assert.equal(zero.abTotal, 0); assert.equal(zero.total, 0);
@@ -600,7 +632,7 @@ test('estimates preserve zero and reject missing B, sentinel values and energy-a
 });
 
 test('secondary output is included only with known scope and complete usage', () => {
-  const h = scriptable(previewSource), estimate = raw => h.api.ppoEstimated(ppoSnapshot(raw));
+  const h = scriptable(widgetSource), estimate = raw => h.api.ppoEstimated(ppoSnapshot(raw));
   const main = { DcacOut1Pw2Dsply: 1200, DcacOut2Pw2Dsply: 300, DcacOutPwDsplyMx: 7200 };
   const split = estimate({ ...main, DcacOutScndPw2Dsply: 100, DcacOutScndPwDsplyMx: 2400 });
   assert.equal(split.abTotal, 1500); assert.equal(split.secondary, 100); assert.equal(split.total, 1600); assert.equal(split.capacity, 9600);
@@ -614,7 +646,7 @@ test('secondary output is included only with known scope and complete usage', ()
 
 for (const family of families) {
   test('PPO-enabled ' + family + ' exposes report age/mode age and keeps missing B unknown', () => {
-    const h = scriptable(previewSource);
+    const h = scriptable(widgetSource);
     const snapshot = ppoSnapshot({ DcacOut1Pw2Dsply: 1500, DcacOutPwDsplyMx: 7200,
       DcacOutScndPw2Dsply: 0, DcacOutScndPwDsplyMx: 0 }, { latestMode: { value: 'OFF', at: TIME - 1000 } });
     const c = cache({ proPower: snapshot });
@@ -633,7 +665,7 @@ for (const family of families) {
 
 test('raw-signal details and reviewed report copy retain energy as raw data and omit private extras', async () => {
   for (const view of ['raw', 'copy']) {
-    const h = scriptable(previewSource);
+    const h = scriptable(widgetSource);
     const snapshot = ppoSnapshot({ DcacOut1Pw2Dsply: 0, DcacOutPwDsplyMx: 7200, DcacOutETot: 87654321,
       PRIVATE_EXTRA: 987654 }, { privateReceipt: 'PRIVATE_RECEIPT', latestMode: { value: 'PRIVATE_MODE', at: TIME - 1000 } });
     const app = await prepared(h, prefs(), cache({ proPower: snapshot,
@@ -650,7 +682,8 @@ test('raw-signal details and reviewed report copy retain energy as raw data and 
       const report = JSON.parse(displayed);
       assert.equal(report.estimates.a, 0); assert.equal(report.estimates.b, null); assert.equal(report.estimates.total, null);
       assert.equal(report.embeddedSampleAgeSeconds, null);
-      assert.equal(report.reportVersion, 2); assert.equal(report.previewVersion, '0.1.6');
+      assert.equal(report.reportVersion, 3); assert.equal(report.appVersion, '0.1.7');
+      assert.equal(report.tool, 'FordWidget Pro Power'); assert.equal(Object.hasOwn(report, 'previewVersion'), false);
       assert.equal(report.refreshDiagnostics.gates['telemetry.proPower'].httpStatus, 429);
       assert.equal(report.refreshDiagnostics.gates['telemetry.proPower'].secondsRemaining, 90);
       assert.deepEqual(report.refreshDiagnostics.lastFullRefresh, { attemptAgeSeconds: 9, outcome: 'completed', steps: {
@@ -669,14 +702,14 @@ test('main and routine Pro Power menus keep optional reports in the separate Tro
   original.store.release(); baseline.state.choices.push(-1); await original.run();
   const originalLabels = baseline.state.alerts.find(alert => alert.kind === 'sheet').actions.map(action => action.title);
   for (const route of ['Pro Power', 'Troubleshooting']) {
-    const h = scriptable(previewSource), app = await prepared(h, prefs(), cache({ proPower: ppoSnapshot({ DcacOut1Pw2Dsply: 0 }) }));
+    const h = scriptable(widgetSource), app = await prepared(h, prefs(), cache({ proPower: ppoSnapshot({ DcacOut1Pw2Dsply: 0 }) }));
     const before = h.state.files.get(app.store.path), secrets = Array.from(h.state.secrets);
     app.store.release(); h.state.choices.push(route, -1); await app.run();
     const main = h.state.alerts[0], labels = main.actions.map(action => action.title);
     assert.deepEqual(labels.filter(label => !['Pro Power', 'Troubleshooting'].includes(label)), originalLabels, 'Every original main-menu action must remain in its original order');
     assert.equal(labels.filter(label => label === 'Troubleshooting').length, 1); assert.equal(labels.filter(label => label === 'Pro Power').length, 1);
     assert.doesNotMatch(labels.join(' '), /raw signals|redacted|report|diagnostic/i);
-    assert.match(main.title, /0\.1\.6/);
+    assert.match(main.title, /0\.1\.7/);
     const submenu = h.state.alerts[1];
     assert.deepEqual(submenu.actions.map(action => action.title), route === 'Pro Power' ?
       ['Read cached Pro Power', 'Request status once…'] : ['Vehicle data report', 'Pro Power raw signals', 'Copy redacted Pro Power report']);
@@ -690,7 +723,7 @@ test('main and routine Pro Power menus keep optional reports in the separate Tro
 
 test('closing Troubleshooting or canceling either report choice performs no read, upload, copy or telemetry update', async () => {
   for (const choices of [[-1], ['Vehicle data report', -1, -1], ['Copy redacted Pro Power report', -1, -1]]) {
-    const h = scriptable(previewSource), app = await prepared(h), before = h.state.files.get(app.store.path), secrets = Array.from(h.state.secrets);
+    const h = scriptable(widgetSource), app = await prepared(h), before = h.state.files.get(app.store.path), secrets = Array.from(h.state.secrets);
     let tokenCalls = 0, writes = 0;
     app.auth.token = async () => { tokenCalls += 1; throw new Error('Unexpected diagnostic authentication'); };
     const write = app.store.write.bind(app.store); app.store.write = value => { writes += 1; return write(value); };
@@ -707,7 +740,7 @@ test('closing Troubleshooting or canceling either report choice performs no read
 
 test('Troubleshooting refuses a changed vehicle or expired session before exposing another report or copying', async () => {
   for (const scenario of ['entry', 'menu', 'review', 'raw-preview', 'lease']) {
-    const h = scriptable(previewSource), app = await prepared(h, prefs(), cache({ proPower: ppoSnapshot({ DcacOut1Pw2Dsply: 0 }) }));
+    const h = scriptable(widgetSource), app = await prepared(h, prefs(), cache({ proPower: ppoSnapshot({ DcacOut1Pw2Dsply: 0 }) }));
     const before = h.state.files.get(app.store.path);
     const switchVehicle = () => h.api.secretSet('vehicle', prefs({ vin: '1FTFW1E50JFA00002' }));
     if (scenario === 'entry') switchVehicle();
@@ -738,7 +771,7 @@ test('Troubleshooting refuses a changed vehicle or expired session before exposi
 });
 
 test('cached refresh diagnostics expose only fixed gate names, relative timing and safe current-stage metadata without I/O', () => {
-  const h = scriptable(previewSource), c = cache({
+  const h = scriptable(widgetSource), c = cache({
     widgetRefreshAfter: TIME + 60001, commandAfter: TIME - 1, wakeAfter: TIME + 900000,
     proPowerRequestAfter: TIME + 120000, proPowerReadAfter: TIME + 30000, nextFetch: 'PRIVATE_TIMER', PRIVATE_COOLDOWN: TIME + 999999,
     proPower: ppoSnapshot({}, { commandAt: TIME - 5400000, fetchedAt: TIME - 4000, id: 'PRIVATE_PPO_RECEIPT' }),
@@ -759,7 +792,8 @@ test('cached refresh diagnostics expose only fixed gate names, relative timing a
   const input = JSON.stringify(c), secrets = Array.from(h.state.secrets), reads = [];
   const get = h.context.Keychain.get; h.context.Keychain.get = key => { reads.push(key); return get(key); };
   const report = plain(h.api.widgetDiagnosticContext(c, TIME));
-  assert.equal(report.previewVersion, '0.1.6');
+  assert.equal(report.appVersion, '0.1.7');
+  assert.equal(Object.hasOwn(report, 'previewVersion'), false);
   assert.deepEqual(Object.keys(report.gates), ['commands', 'commands.generalStatus', 'commands.proPower', 'telemetry.mobile', 'telemetry.proPower', 'auth.mobile', 'auth.autonomic']);
   assert.deepEqual(report.gates.commands, { active: true, secondsRemaining: 62, failures: 2, httpStatus: 409, failedAgeSeconds: 3 });
   assert.deepEqual(report.gates['commands.proPower'], { active: true, secondsRemaining: 90, failures: 1, httpStatus: null, failedAgeSeconds: null });
@@ -787,7 +821,7 @@ test('cached refresh diagnostics expose only fixed gate names, relative timing a
 });
 
 test('passive status diagnostic exposes aggregation freezes, raw seconds and unknown/history evidence without fixing or mutating them', () => {
-  const h = scriptable(previewSource), f = statusFixture();
+  const h = scriptable(widgetSource), f = statusFixture();
   const beforeJSON = JSON.stringify(f.before), rawJSON = JSON.stringify(f.raw);
   const report = h.api.statusDiagnosticReport(f.raw, f.before, VIN, TIME);
   assert.equal(report.normalizedCandidate.lock.value.value, 'Locked');
@@ -827,7 +861,7 @@ test('passive status diagnostic exposes aggregation freezes, raw seconds and unk
 });
 
 test('fuel diagnostic retains typed raw evidence while showing the current fuel normalization and merge decision', () => {
-  const h = scriptable(previewSource), before = cache(), after = plain(before);
+  const h = scriptable(widgetSource), before = cache(), after = plain(before);
   before.fields.fuel = { value: 101.2, source: 'FordPass', at: TIME - 90000 };
   after.fields.fuel = plain(before.fields.fuel);
   const raw = { vin: VIN, updateTime: new Date(TIME).toISOString(), metrics: {
@@ -874,7 +908,7 @@ test('fuel diagnostic retains typed raw evidence while showing the current fuel 
 });
 
 test('synthetic unitless fuel over-read now fills a missing cached percentage with 100 while preserving its timestamp and raw evidence', () => {
-  const h = scriptable(previewSource), original = scriptable(baselineSource, true), before = cache();
+  const h = scriptable(widgetSource), original = scriptable(baselineSource, true), before = cache();
   delete before.fields.fuel;
   const at = TIME - 10000, raw = { vin: VIN, updateTime: new Date(TIME - 1000).toISOString(), metrics: {
     fuelLevel: { value: 103.25, updateTime: new Date(at).toISOString(), PRIVATE_EXTRA: 'PRIVATE_FUEL_EXTRA' },
@@ -916,7 +950,7 @@ test('synthetic unitless fuel over-read now fills a missing cached percentage wi
 });
 
 test('status diagnostic strictly whitelists fields, enum text and timestamps while bounding raw arrays', () => {
-  const h = scriptable(previewSource), f = statusFixture();
+  const h = scriptable(widgetSource), f = statusFixture();
   f.before.fields.lock.source = 'PRIVATE_PROVIDER';
   const entry = { vehicleDoor: VIN, value: 'PRIVATE_STATE', updateTime: 'PRIVATE_TIMESTAMP',
     tags: { DOOR_LATCH_TYPE: 'PRIVATE_LATCH', PRIVATE_TAG: 'PRIVATE_TAG_VALUE' }, PRIVATE_CUSTOM_KEY: 'PRIVATE_CUSTOM_VALUE',
@@ -956,7 +990,7 @@ test('status diagnostic strictly whitelists fields, enum text and timestamps whi
 
 test('status diagnostic cancellation and missing sign-in refuse the passive GET before authentication or cache writes', async () => {
   for (const scenario of ['cancel', 'signed-out']) {
-    const h = scriptable(previewSource), app = await prepared(h), before = h.state.files.get(app.store.path);
+    const h = scriptable(widgetSource), app = await prepared(h), before = h.state.files.get(app.store.path);
     let tokenCalls = 0, writes = 0;
     app.auth.token = async () => { tokenCalls += 1; return 'PRIVATE_DIAGNOSTIC_TOKEN'; };
     const originalWrite = app.store.write.bind(app.store); app.store.write = value => { writes += 1; return originalWrite(value); };
@@ -971,7 +1005,7 @@ test('status diagnostic cancellation and missing sign-in refuse the passive GET 
 });
 
 test('status diagnostic Preview then Copy reuses one passive v1 GET and leaves the telemetry cache byte-identical', async () => {
-  const h = scriptable(previewSource), f = statusFixture(), app = await prepared(h, prefs(), f.before);
+  const h = scriptable(widgetSource), f = statusFixture(), app = await prepared(h, prefs(), f.before);
   const before = h.state.files.get(app.store.path); let writes = 0, tokenCalls = 0;
   app.auth.token = async name => { tokenCalls += 1; assert.equal(name, 'autonomic'); return 'PRIVATE_DIAGNOSTIC_TOKEN'; };
   const originalWrite = app.store.write.bind(app.store); app.store.write = value => { writes += 1; return originalWrite(value); };
@@ -983,10 +1017,11 @@ test('status diagnostic Preview then Copy reuses one passive v1 GET and leaves t
   h.state.choices.push('Preview report', 'Copy report', -1);
   const report = await app.vehicleStatusDiagnostic(prefs());
   assert.equal(report.readOnly, true); assert.equal(h.state.requests.length, 1); assert.equal(tokenCalls, 1);
-  assert.equal(report.reportVersion, 3); assert.equal(report.previewVersion, '0.1.6'); assert.equal(report.cloudReadOutcome, 'succeeded');
+  assert.equal(report.reportVersion, 4); assert.equal(report.appVersion, '0.1.7'); assert.equal(report.cloudReadOutcome, 'succeeded');
+  assert.equal(Object.hasOwn(report, 'previewVersion'), false);
   assert.equal(report.fuel.raw.fuelLevel.value.numericValue, 63);
   assert.equal(report.fuel.normalizedCandidate.fuel.value.numericValue, 63);
-  assert.equal(report.refreshDiagnostics.previewVersion, '0.1.6');
+  assert.equal(report.refreshDiagnostics.appVersion, '0.1.7');
   assert.equal(report.refreshDiagnostics.cachedFuel.value, 63);
   const request = h.state.requests[0];
   assert.equal(request.method, 'GET'); assert.equal(request.url, 'https://api.autonomic.ai/v1/telemetry/sources/fordpass/vehicles/' + VIN);
@@ -1000,14 +1035,14 @@ test('status diagnostic Preview then Copy reuses one passive v1 GET and leaves t
 
 test('a failed or gated passive diagnostic returns safe cached context without retry, telemetry writes or raw errors', async () => {
   for (const scenario of ['http-error', 'historical-gate']) {
-    const h = scriptable(previewSource), app = await prepared(h), before = h.state.files.get(app.store.path); let writes = 0;
+    const h = scriptable(widgetSource), app = await prepared(h), before = h.state.files.get(app.store.path); let writes = 0;
     app.auth.token = async () => 'PRIVATE_DIAGNOSTIC_TOKEN';
     const originalWrite = app.store.write.bind(app.store); app.store.write = value => { writes += 1; return originalWrite(value); };
     if (scenario === 'http-error') h.state.responses.push({ status: 503, body: { token: 'PRIVATE_RESPONSE_TOKEN', vin: VIN, error: 'PRIVATE_SERVER_ERROR' } });
     else h.api.secretSet('gate.telemetry.mobile', { failures: 1, next: TIME + 90000 });
     h.state.choices.push('Preview report', -1);
     const report = await app.vehicleStatusDiagnostic(prefs());
-    assert.equal(report.reportVersion, 3); assert.equal(report.cloudReadOutcome, 'unavailable'); assert.equal(report.fuel, null);
+    assert.equal(report.reportVersion, 4); assert.equal(report.cloudReadOutcome, 'unavailable'); assert.equal(report.fuel, null);
     assert.equal(h.state.requests.length, scenario === 'http-error' ? 1 : 0, 'A failed GET is attempted once; a historical gate permits no request');
     if (h.state.requests.length) assert.equal(h.state.requests[0].method, 'GET');
     const gate = report.refreshDiagnostics.gates['telemetry.mobile'];
@@ -1024,7 +1059,7 @@ test('a failed or gated passive diagnostic returns safe cached context without r
 
 test('the existing widget Refresh button routes directly to the combined refresh in original and PPO views', () => {
   for (const family of ['medium', 'large']) for (const parameter of ['controls', 'ppoa controls']) {
-    const h = scriptable(previewSource), c = cache({ proPower: ppoSnapshot({ DcacOut1Pw2Dsply: 1500, DcacOut2Pw2Dsply: 0, DcacOutPwDsplyMx: 7200 }) });
+    const h = scriptable(widgetSource), c = cache({ proPower: ppoSnapshot({ DcacOut1Pw2Dsply: 1500, DcacOut2Pw2Dsply: 0, DcacOutPwDsplyMx: 7200 }) });
     const tree = new h.api.WidgetRenderer(prefs(), c, parameter).build(family);
     const buttons = nodes(tree).filter(isOriginalRefreshButton);
     assert.equal(buttons.length, 1); assert.equal(actionOf(buttons[0]), 'refreshwidget');
@@ -1034,7 +1069,7 @@ test('the existing widget Refresh button routes directly to the combined refresh
 });
 
 test('canceling the combined widget refresh has no transport, telemetry-cache write or completion side effect', async () => {
-  const h = scriptable(previewSource), prior = { attemptAt: TIME - 3600000, outcome: 'completed', steps: { telemetry: 'saved' } };
+  const h = scriptable(widgetSource), prior = { attemptAt: TIME - 3600000, outcome: 'completed', steps: { telemetry: 'saved' } };
   const app = await prepared(h, prefs(), cache({ widgetRefreshLast: prior })), before = h.state.files.get(app.store.path);
   let writes = 0;
   const originalWrite = app.store.write.bind(app.store); app.store.write = value => { writes += 1; return originalWrite(value); };
@@ -1050,7 +1085,7 @@ test('canceling the combined widget refresh has no transport, telemetry-cache wr
 });
 
 test('forced ordinary telemetry bypasses the local interval but continues to respect server backoff', async () => {
-  const h = scriptable(previewSource), app = await prepared(h, prefs(), cache({ nextFetch: TIME + 900000 }));
+  const h = scriptable(widgetSource), app = await prepared(h, prefs(), cache({ nextFetch: TIME + 900000 }));
   const api = new h.api.FordAPIClient(app.auth, app.store, prefs());
   await api.getVehicleStatus(); assert.equal(h.state.requests.length, 0, 'The default local read interval remains intact');
   const backoff = { next: TIME + 3600000, failures: 1 };
@@ -1064,7 +1099,7 @@ test('forced ordinary telemetry bypasses the local interval but continues to res
 
 test('future backoff observations retain original delays and distinguish no response from an observed HTTP status', async () => {
   for (const status of [0, 400, 401, 403, 409, 429, 500]) {
-    const b = scriptable(baselineSource, true), p = scriptable(previewSource);
+    const b = scriptable(baselineSource, true), p = scriptable(widgetSource);
     const original = new b.api.FordAuthManager(new b.api.LocalStore()), changed = new p.api.FordAuthManager(new p.api.LocalStore());
     for (const auth of [original, changed]) auth.backoff('commands.generalStatus', status, { response: { headers: {} } }, {});
     const oldGate = plain(b.api.secretGet('gate.commands.generalStatus')), newGate = plain(p.api.secretGet('gate.commands.generalStatus'));
@@ -1073,7 +1108,7 @@ test('future backoff observations retain original delays and distinguish no resp
     assert.equal(newGate.httpStatus, status); assert.equal(newGate.failedAt, TIME);
     assert.equal(p.state.requests.length, 0); assert.equal(b.state.requests.length, 0);
   }
-  const b = scriptable(baselineSource, true), p = scriptable(previewSource);
+  const b = scriptable(baselineSource, true), p = scriptable(widgetSource);
   const original = new b.api.FordAuthManager(new b.api.LocalStore()), changed = new p.api.FordAuthManager(new p.api.LocalStore());
   for (let failure = 0; failure < 12; failure += 1) for (const auth of [original, changed]) auth.backoff('commands.generalStatus', 429, { response: { headers: {} } }, {});
   assert.equal(p.api.secretGet('gate.commands.generalStatus').failures, 10);
@@ -1084,7 +1119,7 @@ test('future backoff observations retain original delays and distinguish no resp
   assert.equal(p.api.secretGet('gate.commands.generalStatus').next, b.api.secretGet('gate.commands.generalStatus').next);
 
   for (const scenario of ['timeout', 'http', 'invalid-json']) {
-    const h = scriptable(previewSource), app = await prepared(h);
+    const h = scriptable(widgetSource), app = await prepared(h);
     h.state.responses.push(scenario === 'timeout' ? new Error('PRIVATE_TIMEOUT') :
       scenario === 'http' ? { status: 503, body: { error: 'PRIVATE_SERVER_ERROR' } } : { status: 200, body: 'PRIVATE_INVALID_JSON' });
     await assert.rejects(app.auth.request('telemetry.proPower', 'https://synthetic.invalid/offline-fixture'));
@@ -1102,7 +1137,7 @@ test('future backoff observations retain original delays and distinguish no resp
 });
 
 test('general status refresh uses the original wire body and only a matching terminal SUCCESS confirms completion', async () => {
-  const h = scriptable(previewSource), app = await prepared(h), api = new h.api.FordAPIClient(app.auth, app.store, prefs());
+  const h = scriptable(widgetSource), app = await prepared(h), api = new h.api.FordAPIClient(app.auth, app.store, prefs());
   h.state.responses.push({ body: generalFrame('PRIVATE_HISTORICAL_GENERAL', 'SUCCESS') }, { body: { id: 'PRIVATE_CURRENT_GENERAL' } },
     { body: generalFrame('PRIVATE_UNRELATED_GENERAL', 'SUCCESS') }, { body: generalFrame('PRIVATE_CURRENT_GENERAL', 'SUCCEEDED_ON_DEVICE') },
     { body: generalFrame('PRIVATE_CURRENT_GENERAL', 'SUCCESS') });
@@ -1116,7 +1151,7 @@ test('general status refresh uses the original wire body and only a matching ter
   assert.doesNotMatch(JSON.stringify({ result, cache: app.store.read() }), /PRIVATE_/);
   app.store.release();
   for (const state of ['FAILURE', 'CANCELLED', 'EXPIRED']) {
-    const f = scriptable(previewSource), controller = await prepared(f), client = new f.api.FordAPIClient(controller.auth, controller.store, prefs());
+    const f = scriptable(widgetSource), controller = await prepared(f), client = new f.api.FordAPIClient(controller.auth, controller.store, prefs());
     f.state.responses.push({ body: generalFrame('old', 'SUCCESS') }, { body: { id: 'fresh' } }, { body: generalFrame('fresh', state) });
     const failed = await client.requestGeneralStatus(true);
     assert.equal(failed.outcome, 'device_failed'); assert.equal(failed.dispatched, true);
@@ -1126,12 +1161,12 @@ test('general status refresh uses the original wire body and only a matching ter
 });
 
 test('general refresh refuses missing confirmation, unusable baselines, historical receipts and late success', async () => {
-  const refused = scriptable(previewSource), app = await prepared(refused), api = new refused.api.FordAPIClient(app.auth, app.store, prefs());
+  const refused = scriptable(widgetSource), app = await prepared(refused), api = new refused.api.FordAPIClient(app.auth, app.store, prefs());
   await assert.rejects(api.requestGeneralStatus(false), /Confirm/); assert.equal(refused.state.requests.length, 0);
   const badVIN = new refused.api.FordAPIClient(app.auth, app.store, { ...prefs(), vin: VIN + '\n' });
   assert.equal((await badVIN.requestGeneralStatus(true)).outcome, 'blocked'); assert.equal(refused.state.requests.length, 0); app.store.release();
   for (const body of [{ error: 'PRIVATE_BASELINE_ERROR' }, null]) {
-    const h = scriptable(previewSource), controller = await prepared(h), client = new h.api.FordAPIClient(controller.auth, controller.store, prefs());
+    const h = scriptable(widgetSource), controller = await prepared(h), client = new h.api.FordAPIClient(controller.auth, controller.store, prefs());
     h.state.responses.push(body === null ? { status: 503, body: {} } : { body });
     const result = await client.requestGeneralStatus(true);
     assert.equal(result.outcome, 'baseline_unavailable'); assert.equal(result.dispatched, false);
@@ -1139,7 +1174,7 @@ test('general refresh refuses missing confirmation, unusable baselines, historic
     assert.equal(controller.store.read().commandAfter, undefined); controller.store.release();
   }
   for (const mode of ['historical', 'late']) {
-    const h = scriptable(previewSource), controller = await prepared(h), client = new h.api.FordAPIClient(controller.auth, controller.store, prefs());
+    const h = scriptable(widgetSource), controller = await prepared(h), client = new h.api.FordAPIClient(controller.auth, controller.store, prefs());
     h.state.responses.push({ body: generalFrame('old', 'SUCCESS') }, { body: { id: mode === 'historical' ? 'old' : 'fresh' } });
     if (mode === 'late') h.state.responses.push(() => { h.state.clock += 50000; return { body: generalFrame('fresh', 'SUCCESS') }; });
     const result = await client.requestGeneralStatus(true);
@@ -1150,7 +1185,7 @@ test('general refresh refuses missing confirmation, unusable baselines, historic
 });
 
 test('general-refresh backoff preserves the original lock control after shared spacing', async () => {
-  const h = scriptable(previewSource), app = await prepared(h), api = new h.api.FordAPIClient(app.auth, app.store, prefs());
+  const h = scriptable(widgetSource), app = await prepared(h), api = new h.api.FordAPIClient(app.auth, app.store, prefs());
   h.state.responses.push({ body: generalFrame('old', 'SUCCESS') }, { status: 400, body: { error: 'PRIVATE_GENERAL_FAILURE' } });
   const result = await api.requestGeneralStatus(true);
   assert.equal(result.outcome, 'delivery_uncertain'); assert.equal(result.dispatched, true);
@@ -1167,7 +1202,7 @@ test('general-refresh backoff preserves the original lock control after shared s
 
 test('one confirmed widget refresh independently updates available sources and preserves PPO/cache cooldown across partial failures', async () => {
   for (const scenario of ['ppo-command-fails', 'ordinary-telemetry-fails', 'general-command-fails', 'general-cooldown', 'server-backoff']) {
-    const h = scriptable(previewSource), vehicle = prefs({ imageMode: 'auto' });
+    const h = scriptable(widgetSource), vehicle = prefs({ imageMode: 'auto' });
     const initial = cache({ nextFetch: TIME + 900000, proPower: ppoSnapshot({ DcacOut1Pw2Dsply: 800, DcacOut2Pw2Dsply: 0, DcacOutPwDsplyMx: 7200 }) });
     if (scenario === 'general-cooldown') initial.wakeAfter = TIME + 900000;
     const app = await prepared(h, vehicle, initial), localWork = [], events = [];

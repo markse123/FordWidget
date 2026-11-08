@@ -1,16 +1,16 @@
 {
-  "version": "0.1.6",
+  "version": "0.1.7",
   "upstream": "https://github.com/rushilpunu/FordWidget",
   "upstreamCommit": "1b129eb6155fa7c0a1d14592be6983366943d31b",
   "upstreamSHA256": "2b3502240739b036746c3ad42a247c40e7c0de2ef1612789f60c8125dcfde2a6",
-  "outputSHA256": "197e5191354e108c674266c8c0a83d24bc1cb9673db0f5326e9ef03cd93fcf8a",
+  "outputSHA256": "a607397a032643af1f133d1d8ab206f1510a1977cabb2282bb1cc3c65aa57f4a",
   "changes": [
-    "preview provenance and full upstream license",
+    "fork provenance and full upstream license",
     "clarify derivative provenance",
     "document the additional read-only POST query",
-    "isolate preview Keychain namespace",
-    "isolate preview cache folder",
-    "document isolated cache path",
+    "retain the existing isolated Keychain namespace",
+    "retain the existing isolated cache folder",
+    "document the retained cache path",
     "add portable PPO parser and independent API/cache methods",
     "register four optional PPO fields",
     "register new PPO parameter aliases",
@@ -24,10 +24,10 @@
     "allow the large combined PPO section before flexible footer space",
     "add foreground-only independent PPO read to Fetch telemetry",
     "add Pro Power and optional Troubleshooting menu entries",
-    "identify the installed preview build in the main menu",
+    "identify the installed version in the main menu",
     "add optional PPO renderer and confirmed foreground UI",
     "extend original offline self-test with pure PPO checks",
     "mark entry for offline verification"
   ],
-  "scope": "Optional Pro Power preview; build and offline checks perform no Ford calls"
+  "scope": "Optional Pro Power monitoring; build and offline checks perform no Ford calls"
 }
