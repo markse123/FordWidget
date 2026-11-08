@@ -26,9 +26,18 @@ An existing preview can be updated by replacing its contents under the same scri
 
 See the [usage guide](docs/USAGE.md) for focused Pro Power widgets, refresh behavior, upgrades and troubleshooting. Developers can [rebuild the script and run the offline checks](docs/DEVELOPMENT.md).
 
+## Pro Power Onboard (PPOB)
+
+Optional Pro Power fields show last-reported A/B power, total output and capacity alongside the original vehicle readings. Use the widget's confirmed **Refresh** action for vehicle and Pro Power status, or **Pro Power → Request status once…** for Pro Power alone. See the [Pro Power usage instructions](docs/USAGE.md#use-pro-power-onboard) for setup, field meanings, refresh behavior and troubleshooting.
+
 ## What has been verified
 
-Pro Power requests and monitoring have worked on an iPhone with one **7.2 kW F-150 PowerBoost** system. Two different circuit A loads corroborated the estimate of one watt per raw unit. Circuit B accuracy and physical outlet mapping remain unverified. Other power variants and Canada remain untested; the inherited sign-in profile is US.
+Pro Power requests and monitoring have worked on an iPhone with one **7.2 kW F-150 PowerBoost** system:
+
+- Circuit A was tested at two different loads, corroborating the estimate of one watt per raw unit.
+- **A and B were also tested under load simultaneously.** Both circuits displayed nonzero readings and the displayed total was consistent with their sum.
+
+This confirms the A/B display and combined-load calculation in that test. Circuit B has not had a separate accuracy comparison against the truck's dashboard or an independent meter. Physical outlet mapping, other power variants and Canada remain unverified; the inherited sign-in profile is US.
 
 Power is shown as a **last-reported estimate**, not a live meter. **Status result** is the age of the Pro Power command result, not a verified sample timestamp. A successful request or cloud read does not guarantee every measurement changed. Unknown or incomplete data stays unknown.
 
