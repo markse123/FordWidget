@@ -158,6 +158,16 @@ function secretGet(name) {
 }
 function secretSet(name, value) { Keychain.set(secretKey(name), JSON.stringify(value)); }
 function secretRemove(name) { if (Keychain.contains(secretKey(name))) Keychain.remove(secretKey(name)); }
+function parkedLocationEnabled(prefs = secretGet('vehicle')) {
+  return !!prefs && !(prefs.widget && prefs.widget.show && prefs.widget.show.parked === false);
+}
+function clearCachedLocation(cache) {
+  if (cache && typeof cache === 'object') {
+    if (cache.fields && typeof cache.fields === 'object') delete cache.fields.position;
+    delete cache.place;
+  }
+  return cache;
+}
 function requireApp() {
   if (config.runsInWidget || !config.runsInApp) throw new Error('Open this script in the Scriptable app.');
 }
@@ -278,7 +288,8 @@ class LocalStore {
   read() {
     for (const path of [this.path, this.path + '.bak']) {
       const c = this.readFile(path);
-      if (c && c.version === 1 && vinOK(c.vin) && c.fields && typeof c.fields === 'object') return c;
+      if (c && c.version === 1 && vinOK(c.vin) && c.fields && typeof c.fields === 'object')
+        return parkedLocationEnabled() ? c : clearCachedLocation(c);
     }
     return null;
   }
@@ -349,6 +360,7 @@ class LocalStore {
   }
   write(value) {
     this.assertLease();
+    if (!parkedLocationEnabled()) { this.purgeLocation(); clearCachedLocation(value); }
     const temp = this.path + '.' + this.owner;
     this.fm.writeString(temp, JSON.stringify(value));
     if (this.fm.fileExists(this.path)) {
@@ -357,6 +369,23 @@ class LocalStore {
       this.fm.remove(this.path);
     }
     this.fm.move(temp, this.path);
+  }
+  purgeLocation() {
+    this.assertLease();
+    let failed = false;
+    for (const path of [this.path, this.path + '.bak']) {
+      if (!this.fm.fileExists(path)) continue;
+      try {
+        const c = this.readFile(path);
+        if (!c || typeof c !== 'object') this.fm.remove(path);
+        else if ((c.fields && Object.prototype.hasOwnProperty.call(c.fields, 'position')) ||
+          Object.prototype.hasOwnProperty.call(c, 'place')) this.fm.writeString(path, JSON.stringify(clearCachedLocation(c)));
+      } catch (_) {
+        // If sanitizing fails, remove that copy rather than leave old coordinates recoverable.
+        try { this.fm.remove(path); } catch (__) { failed = true; }
+      }
+    }
+    if (failed) throw new Error('Saved location could not be removed. Try turning Parked location off again.');
   }
 }
 
@@ -734,6 +763,7 @@ class FordAPIClient {
   }
   async getVehicleStatus() {
     this.store.assertLease();
+    if (!parkedLocationEnabled(this.prefs) || !parkedLocationEnabled()) this.store.purgeLocation();
     let c = this.store.read();
     if (!c || c.vin !== this.prefs.vin) c = { version: 1, vin: this.prefs.vin, fields: {} };
     if (c.nextFetch > now()) return { cache: c, note: 'Cloud reads are cooling down. Showing cached data.' };
@@ -763,6 +793,7 @@ class FordAPIClient {
   // Street name for the parked spot. Apple's geocoder, app runs only, only when the truck moved.
   async updatePlace() {
     this.store.assertLease();
+    if (!parkedLocationEnabled(this.prefs) || !parkedLocationEnabled()) return;
     const c = this.store.read(), p = c && c.fields && c.fields.position && c.fields.position.value;
     if (!p || (c.place && meters(c.place, p) < 50 && c.place.label)) return;
     let label = null;
@@ -910,6 +941,8 @@ function widgetOptions(prefs, parameter) {
   // Naming metrics in the Parameter means "show only these".
   if (only.length) for (const k of Object.keys(show)) show[k] = only.includes(k);
   opts.show = show;
+  // A widget parameter cannot override the app-wide location privacy choice.
+  if (!parkedLocationEnabled(prefs)) opts.show.parked = false;
   return opts;
 }
 
@@ -935,7 +968,7 @@ class WidgetRenderer {
   }
   place() {
     const p = this.value('position');
-    if (!p || !this.on('parked')) return null;
+    if (!p || !this.on('parked') || !parkedLocationEnabled()) return null;
     const home = this.prefs.home;
     const near = home && meters(home, p) <= SETTINGS.homeRadius;
     const known = this.cache.place && meters(this.cache.place, p) < 50 ? this.cache.place.label : null;
@@ -1319,8 +1352,9 @@ class AppController {
     if (i === 2) { delete prefs.home; secretSet('vehicle', prefs); }
   }
   // No weather service polling: the truck reports its own outside temperature.
-  async startWeather() {
-    const f = (this.store.read() || {}).fields || {}, t = f.outsideTemp, p = f.position && f.position.value;
+  async startWeather(prefs = secretGet('vehicle')) {
+    const f = (this.store.read() || {}).fields || {}, t = f.outsideTemp;
+    const p = parkedLocationEnabled(prefs) && parkedLocationEnabled() && f.position && f.position.value;
     const hint = deg => deg <= 40 ? ' Cold: a full run warms the cabin.' : deg >= 85 ? ' Hot: a full run cools the cabin.' : '';
     if (t && t.at && t.at > now() - 2 * 3600000) return `Outside ${fahrenheit(t.value)}°F (truck sensor, ${age(t.at)}).${hint(fahrenheit(t.value))}`;
     if (p) {
@@ -1366,6 +1400,7 @@ class AppController {
       }
       if (i === keys.length + 3) prefs.night = Object.assign({}, prefs.night, { notifyOk: !night.notifyOk });
       secretSet('vehicle', prefs);
+      if (!parkedLocationEnabled(prefs)) this.store.purgeLocation();
       const r = () => new WidgetRenderer(prefs, this.store.read());
       if (i === keys.length + 4) await r().build('small').presentSmall();
       if (i === keys.length + 5) await r().build('medium').presentMedium();
@@ -1400,7 +1435,7 @@ class AppController {
     }
     if (!Object.prototype.hasOwnProperty.call(COMMANDS, action)) throw new Error('Unknown action.');
     const a = new Alert(); a.title = `${action === 'refresh' ? 'Wake vehicle' : action.toUpperCase()} · ${prefs.name}`;
-    const weather = action === 'start' ? await this.startWeather() : '';
+    const weather = action === 'start' ? await this.startWeather(prefs) : '';
     a.message = action === 'start' ? `${weather ? weather + '\n\n' : ''}Use only with the truck safely parked outdoors. Sends Lock, confirms that command, then requests engine start.` : action === 'refresh' ? 'Requests a modem wake/status refresh. Updated readings may take time. Limited to one attempt per 15 minutes.' : `Send ${action} to your vehicle?\n\nOnly continue if you tapped this in FordWidget.`;
     a.addAction('Send command'); a.addCancelAction('Cancel');
     if (await a.presentAlert() < 0) return;
@@ -1429,6 +1464,7 @@ class AppController {
     if (args.queryParameters.action === 'selftest') { selfTest(); await message('Self-test', 'All offline checks passed. No network calls or commands.'); return; }
     await this.store.acquire();
     try {
+      if (!parkedLocationEnabled()) this.store.purgeLocation();
       const saved = secretGet('credentials');
       if (saved && saved.password !== undefined) secretSet('credentials', { username: saved.username });
       let prefs = secretGet('vehicle');
