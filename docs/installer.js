@@ -4,7 +4,7 @@
 // Review: https://github.com/markse123/FordWidget
 // Downloads one reviewed version; it never runs the widget or accesses Ford sign-in.
 const INSTALL_VERSION = '0.1.9';
-const INSTALL_SOURCE = 'https://raw.githubusercontent.com/markse123/FordWidget/6e411bd27b9a499e33deca137aab71af0ce36098/FordWidget.js';
+const INSTALL_SOURCE = 'https://raw.githubusercontent.com/markse123/FordWidget/101a79a012c953fd75894f4f061f0ecb5a07cf4e/FordWidget%20Pro%20Power.js';
 const INSTALL_SHA256 = 'b253a3d5504892220524581e54098a0bdc225184050733dc26c32de9115b9dd6';
 class InstallerError extends Error {}
 
