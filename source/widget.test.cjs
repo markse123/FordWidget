@@ -9,7 +9,15 @@ const { test } = require('node:test');
 
 const root = path.resolve(__dirname, '..');
 const pinnedSource = fs.readFileSync(path.join(__dirname, 'FordWidget.upstream.js'), 'utf8');
-const baselineSource = pinnedSource;
+// Compare additive PPO behavior with the same generic units enhancement on upstream.
+// The untouched pinned source is still hashed and self-tested independently.
+const unitPatches = JSON.parse(fs.readFileSync(path.join(__dirname, 'display-unit-patches.json'), 'utf8')).patches;
+let baselineSource = pinnedSource;
+for (const patch of unitPatches) {
+  assert.equal(baselineSource.split(patch.before).length - 1, 1, patch.label);
+  baselineSource = baselineSource.replace(patch.before, patch.after);
+}
+baselineSource = baselineSource.replace('function selfTest() {', fs.readFileSync(path.join(__dirname, 'display-units.js'), 'utf8') + '\nfunction selfTest() {');
 const appVersion = JSON.parse(fs.readFileSync(path.join(__dirname, "version.json"), "utf8")).version;
 const widgetPath = process.argv[2] || process.env.FORDWIDGET_SCRIPT || path.join(root, 'FordWidget Pro Power.js');
 const widgetSource = fs.readFileSync(widgetPath, 'utf8');
@@ -279,7 +287,7 @@ test('the renamed app reuses existing preferences, sign-in tokens, photo and tel
 
 test('Pro Power edits beyond the reviewed inherited fixes remain limited to approved refresh, observation and fuel edits', () => {
   const b = scriptable(baselineSource, true).api, p = scriptable(widgetSource).api;
-  const excluded = { LocalStore: new Set(['acquire', 'acquireBackground', 'assertLease', 'release']), WidgetRenderer: new Set(['build', 'buildSmall', 'buildDesign', 'buttons']), FordAuthManager: new Set(['backoff']), FordAPIClient: new Set(['getVehicleStatus', 'postCommand', 'sendCommand']), AppController: new Set(['action', 'run', 'compatibility', 'chooseDesign', 'alertOptions']) };
+  const excluded = { LocalStore: new Set(['acquire', 'acquireBackground', 'assertLease', 'release']), WidgetRenderer: new Set(['build', 'buildSmall', 'buildDesign', 'buttons']), FordAuthManager: new Set(['backoff']), FordAPIClient: new Set(['getVehicleStatus', 'postCommand', 'sendCommand']), AppController: new Set(['action', 'run', 'compatibility', 'chooseDesign', 'alertOptions', 'customize']) };
   for (const name of ['LocalStore', 'FordAuthManager', 'FordAPIClient', 'WidgetRenderer', 'AppController']) {
     for (const method of Object.getOwnPropertyNames(b[name].prototype)) {
       if (method === 'constructor' || excluded[name]?.has(method)) continue;
@@ -295,6 +303,8 @@ test('Pro Power edits beyond the reviewed inherited fixes remain limited to appr
     .replace("b.url = this.url(action);", "b.url = this.url(action === 'refresh' ? 'refreshwidget' : action);"), 'Only the Refresh button action may change');
   for (const name of ['compatibility', 'chooseDesign', 'alertOptions'])
     assert.equal(p.AppController.prototype[name].toString(), b.AppController.prototype[name].toString().replaceAll("secretSet('vehicle', prefs);", "saveVehiclePreferences(this.store, prefs);"), name + ' only adds guarded preference saves');
+
+  assert.equal(p.AppController.prototype.customize.toString(), b.AppController.prototype.customize.toString().replace("      secretSet('vehicle', prefs);\n      if (!parkedLocationEnabled(prefs)) this.store.purgeLocation();", "      saveVehiclePreferences(this.store, prefs);"), 'Customize only adds the shared guarded save');
 
   assert.equal(p.FordAPIClient.prototype.getVehicleStatus.toString(), b.FordAPIClient.prototype.getVehicleStatus.toString()
     .replace('async getVehicleStatus()', 'async getVehicleStatus(force = false)').replace('    this.store.assertLease();', '    this.store.assertLease();\n    if (!parkedLocationEnabled(this.prefs) || !parkedLocationEnabled()) this.store.purgeLocation();').replace('if (c.nextFetch > now())', 'if (!force && c.nextFetch > now())'),

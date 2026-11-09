@@ -1,5 +1,5 @@
 {
-  "version": "0.1.10",
+  "version": "0.1.11",
   "upstream": "https://github.com/rushilpunu/FordWidget",
   "upstreamCommit": "b7f7e2866c014445b2bec831c237925d3ca61b5f",
   "upstreamSHA256": "605ba8cfba29214ad0e40f3d4b7e6b71d8fd9b9fcd0f42131ec6104485037fab",
@@ -10,7 +10,7 @@
     "https://github.com/rushilpunu/FordWidget/pull/4",
     "https://github.com/rushilpunu/FordWidget/pull/5"
   ],
-  "outputSHA256": "3e866a36e602cf0a2859403b6dc80e95c1bb3c143491a3176268726a20206b00",
+  "outputSHA256": "f865ea1480ccf65d5409cd418525fb4c4e1c7a91a5ccabef228769344f52f808",
   "changes": [
     "purge disabled location before returning cooldown data",
     "guard Vehicle features changes and purge disabled location",
@@ -54,7 +54,20 @@
     "identify the installed version in the main menu",
     "add optional PPO renderer and confirmed foreground UI",
     "extend original offline self-test with pure PPO checks",
-    "mark entry for offline verification"
+    "mark entry for offline verification",
+    "display units: add a local units and formats settings entry",
+    "display units: format detail values without changing canonical cached measurements",
+    "display units: label detail distances and pressures in the selected display units",
+    "display units: format low tire notices while retaining canonical PSI comparison",
+    "display units: honor per-widget units in Attention text without changing alert thresholds",
+    "display units: label the tire alert threshold in the selected pressure format",
+    "display units: convert edited tire thresholds once and preserve unchanged canonical values exactly",
+    "display units: show Auto and all three pressure formats in the existing Customize item",
+    "display units: extend the existing pressure cycle without shifting Customize action indices",
+    "display units: format recent vehicle-sensor weather while retaining Fahrenheit hint thresholds",
+    "display units: format forecast weather while keeping the forecast request and hints Fahrenheit",
+    "display units: format the stale sensor fallback without altering its measurement age",
+    "guard Customize settings saves after a unit or display change"
   ],
   "scope": "Optional Pro Power monitoring on current pinned upstream; build and offline checks perform no Ford calls"
 }

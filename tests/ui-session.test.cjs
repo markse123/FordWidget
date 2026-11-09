@@ -8,6 +8,7 @@ const flows = [
   { name: 'gallery confirmation', method: 'chooseDesign', boundary: 'presentAlert', title: 'Use dashboard?', choices: ['Small', 'Dashboard', 'Use design'] },
   { name: 'compatibility toggle', method: 'compatibility', boundary: 'presentSheet', title: 'Vehicle features', choices: ['OK', 'OK', '✓ Parked location · reported', -1] },
   { name: 'compatibility Done save', method: 'compatibility', boundary: 'presentSheet', title: 'Vehicle features', choices: ['OK', 'OK', -1] },
+  { name: 'Customize widgets toggle', method: 'customize', boundary: 'presentSheet', title: 'Customize widgets', choices: ['✓  Parked location', -1] },
   { name: 'alert toggle', method: 'alertOptions', boundary: 'presentSheet', title: 'Alerts & attention', choices: ['✓ Unlocked', -1] },
   { name: 'alert threshold input', method: 'alertOptions', boundary: 'presentAlert', title: 'Alert threshold', choices: [7, 'Save', -1], threshold: 25 }
 ];

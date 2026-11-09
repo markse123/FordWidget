@@ -1,6 +1,6 @@
 # FordWidget Pro Power — usage
 
-These instructions describe **v0.1.10** of [markse123/FordWidget](https://github.com/markse123/FordWidget), derived from [rushilpunu/FordWidget](https://github.com/rushilpunu/FordWidget). The complete original widget remains available, with optional Pro Power monitoring added.
+These instructions describe **v0.1.11** of [markse123/FordWidget](https://github.com/markse123/FordWidget), derived from [rushilpunu/FordWidget](https://github.com/rushilpunu/FordWidget). The complete original widget remains available, with optional Pro Power monitoring added.
 
 ## Install and connect
 
@@ -34,6 +34,23 @@ Open **Widget gallery**, choose Small, Medium or Large, then tap **Classic**, **
 
 Pro Power fields stay optional. Preview the selected size/design to see which readings fit; small and medium widgets cannot show every field at once.
 
+### Units and formats
+
+Open **Units & formats** in the main menu to choose an app-wide preset and tire-pressure mode. US is the default when no preset is saved; existing settings remain in place.
+
+| Preset | Range and odometer | Temperature | Tire pressure in Auto |
+| --- | --- | --- | --- |
+| **US** | Miles | °F | PSI |
+| **Metric** | Kilometres | °C | kPa |
+
+Tire pressure is independent of the preset. Choose **Auto**, **PSI**, **kPa** or **bar**. Existing explicit PSI/bar choices are preserved, so switching to Metric keeps that pressure choice until you select Auto or another pressure unit. The Tire units option in Customize widgets cycles **Auto → PSI → kPa → bar**.
+
+Add `us` or `metric` to one widget's Parameter to override its preset. Add `psi`, `kpa` or `bar` to override its tire pressure. Explicit pressure words take priority regardless of their position relative to the preset: `metric psi` and `psi metric` both use kilometres/°C with PSI. With the shared pressure mode set to Auto, `metric` uses kPa. These words change units without selecting or hiding fields.
+
+The preset applies to all widget sizes and gallery designs, View details, low-tire messages and remote-start temperature/weather prompts. Tire alert thresholds are shown and entered in the selected pressure unit while retaining the same underlying pressure comparison. App views and notifications use the shared choices; per-widget Parameters apply to that widget.
+
+Switching units reformats the saved reading; it does not request new telemetry or change its timestamp. Percentages and Pro Power W/kW values are unchanged. Technical diagnostic reports keep their raw unit labels and explicit Fahrenheit reference so reports remain comparable across display preferences.
+
 ### Optional Parameters
 
 Naming fields means **show only those fields** and overrides the shared checkboxes. A blank Parameter uses the shared choices.
@@ -47,7 +64,8 @@ Naming fields means **show only those fields** and overrides the shared checkbox
 | `ppob` | Pro Power B only |
 | `buttons -photo` | Vehicle controls layout without the photo |
 | `status` | Status layout without the control grid |
-| `bar` or `psi` | Tire pressure units |
+| `us` or `metric` | Override the widget's display preset |
+| `psi`, `kpa` or `bar` | Override tire pressure independently of the preset |
 
 Pro Power fields are `ppoa`, `ppob`, `ppototal` (alias `ppo`) and `ppocapacity`. Original field names remain `photo`, `fuel`, `battery`, `tires`, `oil`, `lock`, `odometer`, `doors`, `temp` and `parked`. Prefix a field with `-` to hide it.
 
@@ -61,7 +79,7 @@ Selected controls are unverified until an optional **Test a command…** sends a
 
 ## Alerts and attention
 
-Open **Alerts & attention** to enable or disable unlocked, door/hood/tailgate open, low tire, low fuel, low oil, low 12V battery and remote-start-running conditions. Adjust tire, fuel, oil and battery thresholds there. These choices apply to the evening check; set its time and optional positive notice in Customize widgets.
+Open **Alerts & attention** to enable or disable unlocked, door/hood/tailgate open, low tire, low fuel, low oil, low 12V battery and remote-start-running conditions. Adjust tire, fuel, oil and battery thresholds there. Tire-pressure inputs use the pressure unit selected in Units & formats. These choices apply to the evening check; set its time and optional positive notice in Customize widgets.
 
 **Widget attention** is off by default. When enabled, Home Screen widgets show the first matching condition and the age of cached readings, with a count when more conditions match. It performs no extra cloud read and is unavailable on Lock Screen widgets. Missing data remains unknown; a displayed warning may be old. iOS controls widget redraw and notification timing.
 
@@ -162,7 +180,7 @@ If outside temperature stays unchanged after a refresh, collect the report befor
 
 In v0.1.10, vehicle report version 5 compares the raw temperature value, unit labels and measurement time with the saved value, normalized candidate and hypothetical merge result. It identifies whether the time came from the metric or a root-response fallback, and explains acceptance/merge decisions. If the cloud read is blocked or unavailable, the report still includes redacted cached temperature data.
 
-This is evidence collection, not a temperature fix. The report reuses its one passive cloud read; it sends no vehicle command, saves no candidate telemetry and does not change temperature units, mapping or merge behavior.
+The report collects evidence using its one passive cloud read; it sends no vehicle command, saves no candidate telemetry and does not change temperature mapping or merge behavior. Its raw unit labels and explicit Fahrenheit reference remain unchanged when the widget is set to Metric. A display-unit change does not make an old temperature sample current.
 
 If these checks do not explain the issue, open **Troubleshooting → Vehicle data report** from the main menu. Choose **Preview report** or **Copy report**. It attempts one passive cloud read and compares relevant raw values with the saved cache and hypothetical normalization/merge results; it does not update saved vehicle telemetry or send a vehicle command. A safe cached report remains available if the read fails. **Troubleshooting → Copy redacted Pro Power report** uses saved data without a cloud read.
 
