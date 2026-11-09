@@ -2,7 +2,7 @@
 
 Home Screen and Lock Screen widgets for iPhone, built with [Scriptable](https://scriptable.app). This fork retains the original FordWidget features and adds optional **Pro Power Onboard monitoring**. Developed on a 14th-gen F-150; compatibility with other Ford models and individual features remains unverified. Electric vehicles are outside the current testing scope.
 
-**v0.1.9.** [Install on your iPhone](https://markse123.github.io/FordWidget/) · [Script source](FordWidget%20Pro%20Power.js) · [Setup and usage](docs/USAGE.md)
+**v0.1.10.** [Install on your iPhone](https://markse123.github.io/FordWidget/) · [Script source](FordWidget%20Pro%20Power.js) · [Setup and usage](docs/USAGE.md)
 
 ## What it includes
 
@@ -14,6 +14,7 @@ Home Screen and Lock Screen widgets for iPhone, built with [Scriptable](https://
 - Confirmed lock/unlock and engine start/stop actions, remote-start countdown, general wake request, evening checks and notifications, and per-widget customization.
 - Optional Pro Power A, B, total and capacity estimates, plus a dedicated details view and raw signals. Pro Power fields are **off by default** and can join the original readings or form a separate widget.
 - One confirmed **Refresh** action from the widget to request general vehicle and Pro Power status, then read the available cloud data.
+- A redacted **Vehicle data report** with outside-temperature values, units, timestamps and cache comparisons for investigating unchanged readings. [Capture instructions](docs/USAGE.md#outside-temperature-capture).
 
 Pro Power outlet or Generator Mode switching is **not implemented**. Engine controls retain their original purpose.
 

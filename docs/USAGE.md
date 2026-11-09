@@ -1,6 +1,6 @@
 # FordWidget Pro Power — usage
 
-These instructions describe **v0.1.9** of [markse123/FordWidget](https://github.com/markse123/FordWidget), derived from [rushilpunu/FordWidget](https://github.com/rushilpunu/FordWidget). The complete original widget remains available, with optional Pro Power monitoring added.
+These instructions describe **v0.1.10** of [markse123/FordWidget](https://github.com/markse123/FordWidget), derived from [rushilpunu/FordWidget](https://github.com/rushilpunu/FordWidget). The complete original widget remains available, with optional Pro Power monitoring added.
 
 ## Install and connect
 
@@ -151,6 +151,18 @@ This fork is isolated from the original FordWidget. Installing it for the first 
 - **App session expired:** reopen the script and repeat the action. Foreground sessions last up to 15 minutes; a long-paused dialog cannot save changes or send commands after expiry.
 - **App data changed but the widget did not:** verify the selected script and Run Script interaction setting, preview the size in Scriptable, and allow iOS to redraw it.
 - **Refresh only opens Scriptable without the confirmation:** confirm that the widget selects the updated script and that **When Interacting** is **Run Script**. This intermittent behavior has been observed; a later tap reached the correct prompt, but its cause has not been established. For a Pro Power-only check, open the script's **Pro Power → Request status once…** action directly. If it recurs, note whether Scriptable shows its scripts list or the script's menu, plus the installed version.
+
+### Outside-temperature capture
+
+If outside temperature stays unchanged after a refresh, collect the report before assuming the widget or Ford reading is current:
+
+1. After a successful combined **Refresh**, keep Scriptable open and return to the script's main menu.
+2. Open **Troubleshooting → Vehicle data report → Copy report**.
+3. Share the `temperature` section, plus `cloudReadOutcome` and `refreshDiagnostics`. Review the copied text first; passwords, tokens, VIN and location are not needed.
+
+In v0.1.10, vehicle report version 5 compares the raw temperature value, unit labels and measurement time with the saved value, normalized candidate and hypothetical merge result. It identifies whether the time came from the metric or a root-response fallback, and explains acceptance/merge decisions. If the cloud read is blocked or unavailable, the report still includes redacted cached temperature data.
+
+This is evidence collection, not a temperature fix. The report reuses its one passive cloud read; it sends no vehicle command, saves no candidate telemetry and does not change temperature units, mapping or merge behavior.
 
 If these checks do not explain the issue, open **Troubleshooting → Vehicle data report** from the main menu. Choose **Preview report** or **Copy report**. It attempts one passive cloud read and compares relevant raw values with the saved cache and hypothetical normalization/merge results; it does not update saved vehicle telemetry or send a vehicle command. A safe cached report remains available if the read fails. **Troubleshooting → Copy redacted Pro Power report** uses saved data without a cloud read.
 

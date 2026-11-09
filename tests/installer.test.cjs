@@ -14,6 +14,10 @@ const widgetVersion = widget.match(/^FordWidget Pro Power ([^\r\n]*)\r?$/m)[1];
 const withVersion = value => widget.replace(/^FordWidget Pro Power [^\r\n]*\r?$/m, 'FordWidget Pro Power ' + value)
   .replace(/^const FORDWIDGET_VERSION = '[^'\r\n]*';\r?$/m, "const FORDWIDGET_VERSION = '" + value.replace(/^Preview /, '') + "';");
 const oldWidget = withVersion('Preview 0.1.7');
+const versionParts = widgetVersion.split('.');
+const nextPatchVersion = versionParts.slice(0, 2).concat(String(BigInt(versionParts[2]) + 1n)).join('.');
+const nextMinorVersion = [versionParts[0], String(BigInt(versionParts[1]) + 1n), '0'].join('.');
+const nextMajorVersion = [String(BigInt(versionParts[0]) + 1n), '0', '0'].join('.');
 function load(options = {}) {
   const state = {files: new Map(options.files || []), choices: [...(options.choices || [])], alerts: [], requests: [], ops: [], downloads: [], complete: 0};
   const data = text => ({getBytes: () => Array.from(Buffer.from(text, 'utf8')), toRawString: () => text});
@@ -201,7 +205,7 @@ test('the top-level installer hides untrusted transport errors and completes wit
 });
 
 test('a pinned installer refuses to downgrade a newer installed fork', async () => {
-  for (const version of ['0.1.10', '0.2.0', '1.0.0', '9007199254740993.0.0']) {
+  for (const version of [nextPatchVersion, nextMinorVersion, nextMajorVersion, '9007199254740993.0.0']) {
     const newer = withVersion(version);
     const h = load({files: [[file(name), newer]], choices: [0, 1, {name}]});
     await assert.rejects(run(h), /newer than this installer/);
@@ -322,13 +326,14 @@ test('version comparison is exact for large components and rejects noncanonical 
   assert.equal(h.api.installerCompareVersions('0.1.9007199254740993', '0.1.9007199254740992'), 1);
   assert.equal(h.api.installerCompareVersions('0.1.9007199254740992', '0.1.9007199254740993'), -1);
   assert.equal(h.api.installerCompareVersions('0.2.0', '0.1.999'), 1);
+  assert.equal(h.api.installerCompareVersions('0.1.10', '0.1.9'), 1);
   assert.equal(h.api.installerCompareVersions('0.1.8', '0.1.8'), 0);
   assert.throws(() => h.api.installerCompareVersions('0.1.8-beta', '0.1.8'), /could not be verified/);
 });
 
 test('downloaded header must match the advertised version even when the bytes pass SHA-256', async () => {
   const digest = crypto.createHash('sha256').update(widget).digest('hex');
-  const alteredInstaller = source.replace(/^const INSTALL_VERSION = '[^']+';$/m, "const INSTALL_VERSION = '0.1.10';")
+  const alteredInstaller = source.replace(/^const INSTALL_VERSION = '[^']+';$/m, "const INSTALL_VERSION = '" + nextPatchVersion + "';")
     .replace(/^const INSTALL_SHA256 = '[^']+';$/m, "const INSTALL_SHA256 = '" + digest + "';");
   const h = load({source: alteredInstaller, choices: [0, 0, {name}]});
   await assert.rejects(run(h), /version did not match/);

@@ -1,7 +1,7 @@
 // Variables used by Scriptable.
 // icon-color: blue; icon-glyph: truck;
 /*
-FordWidget Pro Power 0.1.9
+FordWidget Pro Power 0.1.10
 Derived from rushilpunu/FordWidget, pinned commit b7f7e2866c014445b2bec831c237925d3ca61b5f.
 All original layouts, controls, telemetry, photos and notifications remain available.
 New optional parameters: ppoa ppob ppototal ppocapacity (alias: ppo).
@@ -2705,7 +2705,7 @@ WidgetRenderer.prototype.build = function(family = 'medium', notice = '') {
 
 // Local metadata only: fixed gate names, fixed cache fields, and no token reads.
 // Missing historical HTTP metadata stays unknown; a gate is not an HTTP trace.
-const FORDWIDGET_VERSION = '0.1.9';
+const FORDWIDGET_VERSION = '0.1.10';
 const WIDGET_DIAGNOSTIC_GATES = Object.freeze([
   'commands', 'commands.generalStatus', 'commands.proPower', 'telemetry.mobile',
   'telemetry.proPower', 'auth.mobile', 'auth.autonomic'
@@ -2852,6 +2852,55 @@ function statusFuelDiagnostic(raw, before, vin, clock = now(), after = before) {
     wouldMerge: statusFuelFields(merged, clock), cachedAfter: statusFuelFields(after.fields, clock) };
 }
 
+// Observe the existing temperature parser and merge without changing saved data.
+const STATUS_TEMP_UNITS = Object.freeze(['C', '°C', 'celsius', 'degC', 'CELSIUS', 'DEGREES_CELSIUS',
+  'F', '°F', 'fahrenheit', 'degF', 'FAHRENHEIT', 'DEGREES_FAHRENHEIT', 'K', 'kelvin']);
+const STATUS_TEMP_SCOPE = 'One FordPass response compared with saved cache; no simultaneous FordConnect read. Existing outsideTemperature parser assumes Celsius and ignores unit labels. No conversion, alias, range or merge changes applied.';
+function statusTemperatureFields(fields, clock) {
+  const item = statusDiagRecord(fields) && statusDiagOwn(fields, 'outsideTemp') && statusDiagRecord(fields.outsideTemp) ? fields.outsideTemp : null;
+  const value = item ? statusFuelNumber(item.value) : null;
+  return { outsideTemp: item ? { value, asDisplayedFahrenheit: value.numericValue === null ? null : Math.round(value.numericValue * 9 / 5 + 32),
+    source: ['FordPass', 'FordConnect'].includes(item.source) ? item.source : null,
+    at: statusDiagnosticTime(item.at, clock) } : null };
+}
+function statusTemperatureCached(before, after, clock) {
+  return { readOnly: true, scope: STATUS_TEMP_SCOPE, normalization: 'not_attempted', reason: 'cloud_unavailable',
+    timestampSource: 'unknown', mergeDecision: 'not_evaluated', raw: null,
+    before: statusTemperatureFields(before.fields, clock), normalizedCandidate: statusTemperatureFields({}, clock),
+    wouldMerge: statusTemperatureFields(before.fields, clock), cachedAfter: statusTemperatureFields(after.fields, clock) };
+}
+function statusTemperatureDiagnostic(raw, before, vin, clock = now(), after = before) {
+  if (typeof vin !== 'string' || vin.length !== 17 || !vinOK(vin) || !statusDiagRecord(raw))
+    throw new Error('Temperature diagnostic response vehicle mismatch.');
+  const root = statusDiagOwn(raw, 'vehicleStatus') ? raw.vehicleStatus : raw;
+  if (!statusDiagRecord(root) || !statusDiagRecord(root.metrics)) throw new Error('Temperature diagnostic response schema unsupported.');
+  for (const object of [raw, root]) for (const key of ['vin', 'VIN']) {
+    if (statusDiagOwn(object, key) && (typeof object[key] !== 'string' || object[key].toUpperCase() !== vin))
+      throw new Error('Temperature diagnostic response vehicle mismatch.');
+  }
+  statusDiagValidateCache(before, vin); statusDiagValidateCache(after, vin);
+  const entry = statusDiagOwn(root.metrics, 'outsideTemperature') ? root.metrics.outsideTemperature : undefined;
+  const own = key => statusDiagRecord(entry) && statusDiagOwn(entry, key) ? entry[key] : undefined;
+  const value = own('value'), number = finite(value);
+  const reason = entry === undefined || entry === null ? 'metric_missing' : !statusDiagRecord(entry) ? 'invalid_metric_shape' :
+    value === undefined || value === null ? 'value_missing' : number === null ? 'non_numeric' :
+    number <= -60 || number >= 70 ? 'out_of_parser_range' : 'accepted';
+  let candidate = {}, normalization = 'completed';
+  try { candidate = normalize(raw, vin, 'FordPass', clock); }
+  catch (_) { normalization = 'no_supported_fields_or_schema'; }
+  const only = fields => statusDiagOwn(fields, 'outsideTemp') ? { outsideTemp: fields.outsideTemp } : {};
+  const merged = mergeFields(only(before.fields), {}, only(candidate));
+  const incoming = candidate.outsideTemp, previous = before.fields.outsideTemp;
+  const mergeDecision = !incoming ? 'no_candidate' : !previous ? 'accepted_no_cached_value' : !previous.at ? 'accepted_cached_time_missing' :
+    !incoming.at ? 'retained_candidate_time_missing' : incoming.at >= previous.at ? 'accepted_not_older' : 'retained_candidate_older';
+  return { readOnly: true, scope: STATUS_TEMP_SCOPE, normalization, reason,
+    timestampSource: !incoming ? 'unknown' : timestamp(own('updateTime')) !== null ? 'metric' : timestamp(root.updateTime) !== null ? 'root' : 'unknown',
+    mergeDecision, rootUpdateTime: statusDiagnosticTime(root.updateTime, clock),
+    raw: { outsideTemperature: statusFuelEntry(entry, STATUS_TEMP_UNITS, clock) },
+    before: statusTemperatureFields(before.fields, clock), normalizedCandidate: statusTemperatureFields(candidate, clock),
+    wouldMerge: statusTemperatureFields(merged, clock), cachedAfter: statusTemperatureFields(after.fields, clock) };
+}
+
 // Passive, redacted lock/door investigation. No cache write or vehicle command.
 const STATUS_DIAG_COMPONENTS = Object.freeze(['ALL_DOORS', 'FRONT_LEFT', 'FRONT_RIGHT', 'REAR_LEFT', 'REAR_RIGHT',
   'LEFT_FRONT', 'RIGHT_FRONT', 'LEFT_REAR', 'RIGHT_REAR', 'HOOD', 'TAILGATE', 'TRUNK', 'CARGO', 'DRIVER', 'PASSENGER',
@@ -2963,7 +3012,7 @@ AppController.prototype.vehicleStatusDiagnostic = async function(prefs) {
     validate();
     if (!secretGet('token.mobile')) { await message('Vehicle data diagnostic', 'Connect FordPass first. No cloud read was sent.'); return null; }
     const choice = new Alert(); choice.title = 'Vehicle data diagnostic';
-    choice.message = 'Check the saved cooldowns and compare one passive Ford cloud read with cached fuel, door and lock readings. No vehicle command or telemetry-cache update is requested. A redacted cached report remains available if the cloud read is blocked.';
+    choice.message = 'Check the saved cooldowns and compare one passive Ford cloud read with cached temperature, fuel, door and lock readings. No vehicle command or telemetry-cache update is requested. A redacted cached report remains available if the cloud read is blocked.';
     choice.addAction('Preview report'); choice.addAction('Copy report'); choice.addCancelAction('Cancel');
     const selected = await choice.presentAlert(); if (selected < 0) return null;
     validate(); const before = this.store.read(); statusDiagValidateCache(before, vin);
@@ -2979,12 +3028,13 @@ AppController.prototype.vehicleStatusDiagnostic = async function(prefs) {
       try {
         report = statusDiagnosticReport(raw, before, vin, clock, after);
         report.fuel = statusFuelDiagnostic(raw, before, vin, clock, after);
+        report.temperature = statusTemperatureDiagnostic(raw, before, vin, clock, after);
       } catch (_) { report = null; cloudReadOutcome = 'response_rejected'; }
     }
     if (!report) report = { readOnly: true, before: statusDiagnosticFields(before.fields, clock),
-      cachedAfter: statusDiagnosticFields(after.fields, clock), fuel: null };
+      cachedAfter: statusDiagnosticFields(after.fields, clock), fuel: null, temperature: statusTemperatureCached(before, after, clock) };
     report.tool = 'FordWidget vehicle data diagnostic';
-    report.reportVersion = 4;
+    report.reportVersion = 5;
     report.appVersion = FORDWIDGET_VERSION;
     report.cloudReadOutcome = cloudReadOutcome;
     report.refreshDiagnostics = widgetDiagnosticContext(after, clock);
@@ -2992,7 +3042,7 @@ AppController.prototype.vehicleStatusDiagnostic = async function(prefs) {
     let copy = selected === 1;
     if (!copy) {
       await QuickLook.present(text); validate();
-      const next = new Alert(); next.title = 'Redacted report ready'; next.message = 'Copy this same report to share fuel/status timestamps and cooldown details. No additional cloud read is needed.';
+      const next = new Alert(); next.title = 'Redacted report ready'; next.message = 'Copy this same report to share temperature/fuel/status timestamps and cooldown details. No additional cloud read is needed.';
       next.addAction('Copy report'); next.addCancelAction('Close'); copy = await next.presentAlert() === 0;
     }
     validate();
