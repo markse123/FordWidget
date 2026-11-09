@@ -95,7 +95,7 @@ Widget buttons (Lock, Unlock, Start, Refresh) open Scriptable and ask for confir
 | Word | Effect |
 |---|---|
 | `buttons` | Medium widget shows Lock / Unlock / Start / Refresh buttons |
-| `status` | Status‑only layout, no buttons |
+| `status` | Classic status layout without buttons; gallery designs may retain controls |
 | `fuel tires lock` … | Show **only** these items |
 | `-photo`, `-oil` … | Hide these items |
 | `us` / `metric` | Override display preset for this widget |
