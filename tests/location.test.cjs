@@ -46,9 +46,39 @@ test('turning Parked location off immediately clears both copies and canceled St
   await app.action('start', vehicle);
   assert.equal(h.state.requests.length, 0);
   assert.match(h.state.alerts.at(-1).title, /^START/);
-  assert.match(h.state.alerts.at(-1).message, /truck sensor/);
+  assert.match(h.state.alerts.at(-1).message, /vehicle sensor/);
   assert.equal(h.state.alerts.at(-1).cancel, 'Cancel');
   app.store.release();
+});
+
+test('Vehicle features saves purge both raw cache copies immediately when location is disabled', async () => {
+  for (const scenario of ['toggle-off', 'already-off']) {
+    const h = load(), vehicle = prefs(scenario === 'already-off' ? { widget: { show: { parked: false } } } : {});
+    const app = await prepared(h, vehicle, located({ nextFetch: TIME + 60000 }));
+    seedCopies(h, app, located({ nextFetch: TIME + 60000 }));
+    if (scenario === 'already-off') for (const name of ['mobile', 'autonomic']) h.state.secrets.delete(h.api.secretKey('token.' + name));
+    const tokens = [...h.state.secrets].filter(([key]) => key.includes('token.'));
+    let menus = 0;
+    const present = h.context.Alert.prototype.presentSheet;
+    h.context.Alert.prototype.presentSheet = async function() {
+      if (this.title === 'Vehicle features' && ++menus === 2) {
+        assert.equal(h.api.secretGet('vehicle').widget.show.parked, false);
+        cleanCopies(h, app); // The toggle must purge before the next prompt, not only on Done.
+      }
+      return present.call(this);
+    };
+    h.state.choices.push('OK', 'OK', ...(scenario === 'toggle-off' ? ['✓ Parked location · reported', -1] : [-1]));
+    await app.compatibility(vehicle);
+    assert.equal(h.state.choices.length, 0); assert.equal(h.api.secretGet('vehicle').widget.show.parked, false);
+    cleanCopies(h, app);
+    for (const suffix of ['', '.bak']) {
+      const saved = JSON.parse(h.state.files.get(app.store.path + suffix));
+      assert.equal(saved.fields.fuel.value, 53); assert.equal(saved.fields.outsideTemp.value, 10);
+    }
+    assert.deepEqual([...h.state.secrets].filter(([key]) => key.includes('token.')), tokens);
+    assert.equal(h.state.requests.length, 0); assert.equal(h.state.geocodes.length, 0); assert.equal(h.state.safari.length, 0);
+    app.store.release();
+  }
 });
 
 test('disabled location is hidden on primary and backup reads and cannot be re-enabled by a widget parameter', async () => {
@@ -63,6 +93,7 @@ test('disabled location is hidden on primary and backup reads and cannot be re-e
   assert.equal(renderer.place(), null);
   await new h.api.FordAPIClient(app.auth, app.store, vehicle).updatePlace();
   await app.startWeather(vehicle);
+  await app.startWeather();
   await app.details(vehicle);
   await app.parked(vehicle);
   assert.equal(h.state.requests.length, 0);
@@ -174,6 +205,25 @@ test('failed removal reports failure, cleans the other copy and keeps location u
   h.state.choices.push(-1);
   await app.action('start', vehicle);
   assert.equal(h.state.requests.length, 0);
+  app.store.release();
+});
+
+test('both failed cache rewrites still delete the backup when primary removal also fails', async () => {
+  const h = load(), vehicle = prefs({ widget: { show: { parked: false } } }), app = await prepared(h, vehicle);
+  seedCopies(h, app);
+  const write = h.fm.writeString, remove = h.fm.remove;
+  h.fm.writeString = (file, value) => {
+    if ([app.store.path, app.store.path + '.bak'].includes(file)) throw new Error('Synthetic rewrite failure');
+    return write(file, value);
+  };
+  h.fm.remove = file => {
+    if (file === app.store.path) throw new Error('Synthetic primary removal failure');
+    return remove(file);
+  };
+  assert.throws(() => app.store.purgeLocation(), /Saved location could not be removed/);
+  assert.equal(h.state.files.has(app.store.path + '.bak'), false);
+  noLocation(app.store.read());
+  assert.equal(h.state.requests.length, 0); assert.equal(h.state.geocodes.length, 0);
   app.store.release();
 });
 

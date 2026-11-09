@@ -1,4 +1,4 @@
-// Large mixed dashboard only. Data, authentication and vehicle actions are unchanged.
+// Classic keeps its existing PPO dashboard; other gallery designs add a compact section.
 function ppoDashboardAge(at, clock = now()) {
   if (typeof at !== 'number' || !Number.isFinite(at) || at <= 0 || at > clock) return 'unknown';
   const seconds = Math.floor((clock - at) / 1000), minutes = Math.floor(seconds / 60);
@@ -6,6 +6,31 @@ function ppoDashboardAge(at, clock = now()) {
   if (minutes < 60) return minutes + 'm ago';
   const hours = Math.floor(minutes / 60);
   return hours < 48 ? hours + 'h ' + minutes % 60 + 'm ago' : Math.floor(hours / 24) + 'd ' + hours % 24 + 'h ago';
+}
+
+function ppoDashboardPanel(renderer, widget, selected, originalText = renderer.text) {
+  const snapshot = ppoSnapshotFor(renderer.cache, renderer.prefs), view = ppoView(snapshot);
+  const entries = ppoEntries(ppoEstimated(snapshot), selected);
+  const text = (stack, content, size, bold = false, color = renderer.muted) =>
+    originalText.call(renderer, stack, content, size, bold, color);
+  const panel = widget.addStack(); panel.layoutVertically(); panel.spacing = 1; panel.url = renderer.url('propower');
+  const header = panel.addStack(); header.layoutHorizontally(); header.centerAlignContent(); header.spacing = 6;
+  text(header, 'Pro Power · last reported estimates', 9, true, renderer.ink);
+  header.addSpacer(); text(header, 'Sample time unknown', 7);
+  text(panel, 'Status result: ' + ppoDashboardAge(view.commandAt), 7);
+  const mode = view.latestMode || {}, modeValue = ['OFF', 'LOW', 'HIGH'].includes(mode.value) ? mode.value : 'unknown';
+  text(panel, 'Ford mode: ' + modeValue + ' · reported ' + ppoDashboardAge(mode.at), 7);
+  for (let i = 0; i < entries.length; i += 2) {
+    const row = panel.addStack(); row.layoutHorizontally(); row.spacing = 8;
+    row.addSpacer();
+    for (const item of entries.slice(i, i + 2)) {
+      const cell = row.addStack(); cell.layoutVertically(); cell.size = new Size(138, 0);
+      const label = item.label === 'Combined capacity' ? 'Combined cap' : item.label;
+      text(cell, label + ' ' + ppoPowerText(item.value), 12, true, renderer.ink);
+    }
+    row.addSpacer();
+  }
+  return panel;
 }
 
 function ppoDashboardVehicle(renderer, widget) {
@@ -68,7 +93,7 @@ function ppoDashboardVehicle(renderer, widget) {
   return vehicle;
 }
 
-function ppoDashboardPanel(renderer, widget, selected) {
+function ppoClassicDashboardPanel(renderer, widget, selected) {
   const snapshot = ppoSnapshotFor(renderer.cache, renderer.prefs), view = ppoView(snapshot);
   const entries = ppoEntries(ppoEstimated(snapshot), selected);
   const panel = widget.addStack(); panel.layoutVertically(); panel.spacing = 2; panel.url = renderer.url('propower');
@@ -96,23 +121,29 @@ function ppoBuildDashboard(renderer, family, notice, selected) {
   const widget = renderer.frame([8, 12, 8, 12]);
   // The root retains the main-menu target; only the PPO panel opens its details.
   ppoDashboardVehicle(renderer, widget);
-  widget.addSpacer(6); ppoDashboardPanel(renderer, widget, selected);
+  widget.addSpacer(6); ppoClassicDashboardPanel(renderer, widget, selected);
   widget.addSpacer();
-  if (renderer.opts.layout.large === 'controls') {
+  const permissions = renderer.prefs.compatibility && renderer.prefs.compatibility.commands;
+  const controls = !permissions || ['lock', 'unlock', renderer.remote() ? 'stop' : 'start', 'refresh'].some(action => permissions[action] !== false);
+  if (renderer.opts.layout.large === 'controls' && controls) {
     renderer.text(widget, 'Vehicle controls', 8, true, renderer.muted);
     widget.addSpacer(2); renderer.buttons(widget, 4, 64, 34);
   }
   widget.addSpacer(3);
   const status = notice || (renderer.cache.notice ? 'cached source unavailable' : '');
-  renderer.text(widget, 'Oldest vehicle reading: ' + ppoDashboardAge(renderer.oldest()) +
-    (status ? ' · ' + status : ''), 8, false, renderer.muted);
+  const line = 'Oldest vehicle reading: ' + ppoDashboardAge(renderer.oldest()) + (status ? ' · ' + status : '');
+  const footer = typeof renderer.footer === 'function' ? renderer.footer(line) : line;
+  renderer.text(widget, footer, 8, false, renderer.muted);
+  if (notice && !footer.includes(notice)) renderer.text(widget, notice, 8, false, renderer.muted);
   return widget;
 }
 
 const PPO_DASHBOARD_ORIGINAL_BUILD = WidgetRenderer.prototype.build;
 WidgetRenderer.prototype.build = function(family = 'medium', notice = '') {
-  const selected = ppoSelected(this);
-  if ((family === 'large' || family === 'extraLarge') && selected.length && ppoHasOriginalSelection(this))
+  const selected = ppoSelected(this), design = this.opts.design && this.opts.design.large || 'classic';
+  // Keep the existing mixed Classic dashboard; other gallery designs retain
+  // their upstream vehicle layout and receive the compact additive section.
+  if ((family === 'large' || family === 'extraLarge') && design === 'classic' && selected.length && ppoHasOriginalSelection(this))
     return ppoBuildDashboard(this, family, notice, selected);
   return PPO_DASHBOARD_ORIGINAL_BUILD.call(this, family, notice);
 };

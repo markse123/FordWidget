@@ -269,3 +269,15 @@ test('future Closed or mechanical readings cannot resolve known unsafe component
 test('built-in offline self-test passes with explicitly unknown security fields', () => {
   const h = load(); h.api.selfTest(); assert.equal(h.state.requests.length, 0);
 });
+
+test('undated unsafe readings are not hidden by dated safe ones, and Unknown does not blank the widget age', () => {
+  const h = load();
+  let fields = merge(h, {}, { doorLockStatus: [entry('ALL_DOORS', 'LOCKED', 100), { vehicleDoor: 'FRONT_LEFT', value: 'UNLOCKED' }] });
+  assert.equal(fields.lock.value, 'Unlocked');
+  fields = merge(h, {}, { doorStatus: [entry('FRONT_LEFT', 'CLOSED', 100)], hoodStatus: hood() });
+  fields = merge(h, fields, { doorStatus: [{ vehicleDoor: 'FRONT_LEFT', value: 'OPEN' }], hoodStatus: hood() });
+  assert.equal(fields.doors.value, 'Ajar');
+  fields = merge(h, { fuel: { value: 50, at: at(10), source: 'FordPass' } }, { doorLockStatus: [{ vehicleDoor: 'ALL_DOORS', value: 'WEIRD' }] });
+  assert.equal(fields.lock.value, 'Unknown');
+  assert.equal(new h.api.WidgetRenderer({}, { fields }).oldest(), at(10));
+});

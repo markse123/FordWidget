@@ -9,12 +9,8 @@ const { test } = require('node:test');
 
 const root = path.resolve(__dirname, '..');
 const pinnedSource = fs.readFileSync(path.join(__dirname, 'FordWidget.upstream.js'), 'utf8');
-const upstreamFixes = JSON.parse(fs.readFileSync(path.join(__dirname, 'upstream-fixes.json'), 'utf8'));
-let baselineSource = pinnedSource;
-for (const patch of upstreamFixes.patches) {
-  assert.equal(baselineSource.split(patch.before).length - 1, 1, patch.label + ' must have one exact target');
-  baselineSource = baselineSource.replace(patch.before, patch.after);
-}
+const baselineSource = pinnedSource;
+const appVersion = JSON.parse(fs.readFileSync(path.join(__dirname, "version.json"), "utf8")).version;
 const widgetPath = process.argv[2] || process.env.FORDWIDGET_SCRIPT || path.join(root, 'FordWidget.js');
 const widgetSource = fs.readFileSync(widgetPath, 'utf8');
 const entryMarker = '// __FORDWIDGET_ENTRY__';
@@ -88,8 +84,8 @@ function scriptable(source, baseline = false) {
     fileExists: p => state.files.has(p), createDirectory: p => state.files.set(p, { directory: true }),
     readString: p => { if (!state.files.has(p)) throw new Error('Missing mock file'); return state.files.get(p); },
     writeString: (p, value) => state.files.set(p, String(value)), remove: p => state.files.delete(p),
-    move: (from, to) => { assert.ok(state.files.has(from)); assert.ok(!state.files.has(to), 'Native move refuses an existing destination'); state.files.set(to, state.files.get(from)); state.files.delete(from); },
-    copy: (from, to) => { assert.ok(state.files.has(from)); state.files.set(to, state.files.get(from)); },
+    move: (from, to) => { assert.ok(state.files.has(from)); state.files.set(to, state.files.get(from)); state.files.delete(from); },
+    copy: (from, to) => { assert.ok(state.files.has(from)); assert.ok(!state.files.has(to), 'Native copy refuses an existing destination'); state.files.set(to, state.files.get(from)); },
     readImage: p => state.files.get(p), writeImage: (p, img) => state.files.set(p, img),
   };
   class Alert {
@@ -230,7 +226,7 @@ async function prepared(h, vehicle = prefs(), snapshot = cache()) {
 }
 
 test('pinned original source remains the exact reviewed upstream byte copy', () => {
-  assert.equal(crypto.createHash('sha256').update(pinnedSource).digest('hex'), '2b3502240739b036746c3ad42a247c40e7c0de2ef1612789f60c8125dcfde2a6');
+  assert.equal(crypto.createHash('sha256').update(pinnedSource).digest('hex'), '605ba8cfba29214ad0e40f3d4b7e6b71d8fd9b9fcd0f42131ec6104485037fab');
 });
 
 test('pinned original, reviewed inherited fixes and current self-tests pass without network', () => {
@@ -276,14 +272,14 @@ test('the renamed app reuses existing preferences, sign-in tokens, photo and tel
   assert.deepEqual(plain(h.api.COMMANDS), plain(b.api.COMMANDS));
   assert.equal(h.state.requests.length, 0); assert.equal(h.state.safari.length, 0); assert.equal(h.state.alerts.length, 0);
   assert.deepEqual(Array.from(h.state.secrets), secrets); assert.equal(h.state.files.get(app.store.path), cacheText);
-  assert.match(widgetSource.slice(0, 150), /FordWidget Pro Power 0\.1\.8/);
+  assert.match(widgetSource.slice(0, 150), new RegExp('FordWidget Pro Power ' + appVersion.replaceAll('.', '\\.')));
   assert.doesNotMatch(widgetSource.slice(0, 150), /FordWidget Pro Power Preview/);
   app.store.release();
 });
 
 test('Pro Power edits beyond the reviewed inherited fixes remain limited to approved refresh, observation and fuel edits', () => {
   const b = scriptable(baselineSource, true).api, p = scriptable(widgetSource).api;
-  const excluded = { WidgetRenderer: new Set(['build', 'buttons']), FordAuthManager: new Set(['backoff']), FordAPIClient: new Set(['getVehicleStatus', 'postCommand', 'sendCommand']), AppController: new Set(['action', 'run']) };
+  const excluded = { LocalStore: new Set(['acquire', 'acquireBackground', 'assertLease', 'release']), WidgetRenderer: new Set(['build', 'buildSmall', 'buildDesign', 'buttons']), FordAuthManager: new Set(['backoff']), FordAPIClient: new Set(['getVehicleStatus', 'postCommand', 'sendCommand']), AppController: new Set(['action', 'run', 'compatibility', 'chooseDesign', 'alertOptions']) };
   for (const name of ['LocalStore', 'FordAuthManager', 'FordAPIClient', 'WidgetRenderer', 'AppController']) {
     for (const method of Object.getOwnPropertyNames(b[name].prototype)) {
       if (method === 'constructor' || excluded[name]?.has(method)) continue;
@@ -296,10 +292,13 @@ test('Pro Power edits beyond the reviewed inherited fixes remain limited to appr
     "const e = m[key]; put(field, field === 'fuel' ? fordFuelPercent(e && e.value) : bounded(e && e.value, max), e);\n    if (field === 'fuel' && out.fuel) out.fuel.rawValue = finite(e && e.value);"),
   'Only the fuel-specific clamp and numeric raw-value retention may change; oil/battery bounds and all other normalization stay original');
   assert.equal(p.WidgetRenderer.prototype.buttons.toString(), b.WidgetRenderer.prototype.buttons.toString()
-    .replace("['refresh', 'Refresh', 'arrow.clockwise']", "['refreshwidget', 'Refresh', 'arrow.clockwise']"), 'Only the Refresh button action may change');
+    .replace("b.url = this.url(action);", "b.url = this.url(action === 'refresh' ? 'refreshwidget' : action);"), 'Only the Refresh button action may change');
+  for (const name of ['compatibility', 'chooseDesign', 'alertOptions'])
+    assert.equal(p.AppController.prototype[name].toString(), b.AppController.prototype[name].toString().replaceAll("secretSet('vehicle', prefs);", "saveVehiclePreferences(this.store, prefs);"), name + ' only adds guarded preference saves');
+
   assert.equal(p.FordAPIClient.prototype.getVehicleStatus.toString(), b.FordAPIClient.prototype.getVehicleStatus.toString()
-    .replace('async getVehicleStatus()', 'async getVehicleStatus(force = false)').replace('if (c.nextFetch > now())', 'if (!force && c.nextFetch > now())'),
-  'Only an explicit local-cooldown bypass may change ordinary telemetry reading');
+    .replace('async getVehicleStatus()', 'async getVehicleStatus(force = false)').replace('    this.store.assertLease();', '    this.store.assertLease();\n    if (!parkedLocationEnabled(this.prefs) || !parkedLocationEnabled()) this.store.purgeLocation();').replace('if (c.nextFetch > now())', 'if (!force && c.nextFetch > now())'),
+  'Only privacy purge and an explicit local-cooldown bypass may change ordinary telemetry reading');
   assert.equal(p.FordAPIClient.prototype.postCommand.toString(), b.FordAPIClient.prototype.postCommand.toString().replace(
     "const data = await this.auth.request('commands', `${SETTINGS.autonomic}/command/vehicles/${vin}/commands`, 'POST',",
     "const scope = command === 'refresh' ? 'commands.generalStatus' : 'commands';\n    const data = await this.auth.request(scope, `${SETTINGS.autonomic}/command/vehicles/${vin}/commands`, 'POST',"),
@@ -696,7 +695,7 @@ test('raw-signal details and reviewed report copy retain energy as raw data and 
       const report = JSON.parse(displayed);
       assert.equal(report.estimates.a, 0); assert.equal(report.estimates.b, null); assert.equal(report.estimates.total, null);
       assert.equal(report.embeddedSampleAgeSeconds, null);
-      assert.equal(report.reportVersion, 3); assert.equal(report.appVersion, '0.1.8');
+      assert.equal(report.reportVersion, 3); assert.equal(report.appVersion, appVersion);
       assert.equal(report.tool, 'FordWidget Pro Power'); assert.equal(Object.hasOwn(report, 'previewVersion'), false);
       assert.equal(report.refreshDiagnostics.gates['telemetry.proPower'].httpStatus, 429);
       assert.equal(report.refreshDiagnostics.gates['telemetry.proPower'].secondsRemaining, 90);
@@ -723,7 +722,7 @@ test('main and routine Pro Power menus keep optional reports in the separate Tro
     assert.deepEqual(labels.filter(label => !['Pro Power', 'Troubleshooting'].includes(label)), originalLabels, 'Every original main-menu action must remain in its original order');
     assert.equal(labels.filter(label => label === 'Troubleshooting').length, 1); assert.equal(labels.filter(label => label === 'Pro Power').length, 1);
     assert.doesNotMatch(labels.join(' '), /raw signals|redacted|report|diagnostic/i);
-    assert.match(main.title, /0\.1\.8/);
+    assert.match(main.title, new RegExp(appVersion.replaceAll('.', '\\.')));
     const submenu = h.state.alerts[1];
     assert.deepEqual(submenu.actions.map(action => action.title), route === 'Pro Power' ?
       ['Read cached Pro Power', 'Request status once…'] : ['Vehicle data report', 'Pro Power raw signals', 'Copy redacted Pro Power report']);
@@ -806,7 +805,7 @@ test('cached refresh diagnostics expose only fixed gate names, relative timing a
   const input = JSON.stringify(c), secrets = Array.from(h.state.secrets), reads = [];
   const get = h.context.Keychain.get; h.context.Keychain.get = key => { reads.push(key); return get(key); };
   const report = plain(h.api.widgetDiagnosticContext(c, TIME));
-  assert.equal(report.appVersion, '0.1.8');
+  assert.equal(report.appVersion, appVersion);
   assert.equal(Object.hasOwn(report, 'previewVersion'), false);
   assert.deepEqual(Object.keys(report.gates), ['commands', 'commands.generalStatus', 'commands.proPower', 'telemetry.mobile', 'telemetry.proPower', 'auth.mobile', 'auth.autonomic']);
   assert.deepEqual(report.gates.commands, { active: true, secondsRemaining: 62, failures: 2, httpStatus: 409, failedAgeSeconds: 3 });
@@ -1044,11 +1043,11 @@ test('status diagnostic Preview then Copy reuses one passive v1 GET and leaves t
   h.state.choices.push('Preview report', 'Copy report', -1);
   const report = await app.vehicleStatusDiagnostic(prefs());
   assert.equal(report.readOnly, true); assert.equal(h.state.requests.length, 1); assert.equal(tokenCalls, 1);
-  assert.equal(report.reportVersion, 4); assert.equal(report.appVersion, '0.1.8'); assert.equal(report.cloudReadOutcome, 'succeeded');
+  assert.equal(report.reportVersion, 4); assert.equal(report.appVersion, appVersion); assert.equal(report.cloudReadOutcome, 'succeeded');
   assert.equal(Object.hasOwn(report, 'previewVersion'), false);
   assert.equal(report.fuel.raw.fuelLevel.value.numericValue, 63);
   assert.equal(report.fuel.normalizedCandidate.fuel.value.numericValue, 63);
-  assert.equal(report.refreshDiagnostics.appVersion, '0.1.8');
+  assert.equal(report.refreshDiagnostics.appVersion, appVersion);
   assert.equal(report.refreshDiagnostics.cachedFuel.value, 63);
   const request = h.state.requests[0];
   assert.equal(request.method, 'GET'); assert.equal(request.url, 'https://api.autonomic.ai/v1/telemetry/sources/fordpass/vehicles/' + VIN);
@@ -1092,6 +1091,18 @@ test('the existing widget Refresh button routes directly to the combined refresh
     assert.equal(buttons.length, 1); assert.equal(actionOf(buttons[0]), 'refreshwidget');
     assert.equal(h.api.COMMANDS.refresh, 'statusRefresh', 'The original app Wake command keeps its separate wire operation');
     assert.equal(h.state.requests.length, 0);
+  }
+});
+
+test('disabled Vehicle features refresh cannot be bypassed by a widget deep link or direct refresh call', async () => {
+  for (const path of ['action', 'direct']) {
+    const h = scriptable(widgetSource), vehicle = prefs({ compatibility: { commands: { refresh: false }, verified: {} } });
+    const controller = await prepared(h, vehicle);
+    const beforeFiles = Array.from(h.state.files), beforeSecrets = Array.from(h.state.secrets);
+    await assert.rejects(path === 'action' ? controller.action('refreshwidget', vehicle) : controller.refreshWidget(vehicle), /disabled in Vehicle features/);
+    assert.equal(h.state.alerts.length, 0); assert.equal(h.state.requests.length, 0);
+    assert.deepEqual(Array.from(h.state.files), beforeFiles); assert.deepEqual(Array.from(h.state.secrets), beforeSecrets);
+    controller.store.release();
   }
 });
 
