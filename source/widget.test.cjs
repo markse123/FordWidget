@@ -8,7 +8,13 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 
 const root = path.resolve(__dirname, '..');
-const baselineSource = fs.readFileSync(path.join(__dirname, 'FordWidget.upstream.js'), 'utf8');
+const pinnedSource = fs.readFileSync(path.join(__dirname, 'FordWidget.upstream.js'), 'utf8');
+const upstreamFixes = JSON.parse(fs.readFileSync(path.join(__dirname, 'upstream-fixes.json'), 'utf8'));
+let baselineSource = pinnedSource;
+for (const patch of upstreamFixes.patches) {
+  assert.equal(baselineSource.split(patch.before).length - 1, 1, patch.label + ' must have one exact target');
+  baselineSource = baselineSource.replace(patch.before, patch.after);
+}
 const widgetPath = process.argv[2] || process.env.FORDWIDGET_SCRIPT || path.join(root, 'FordWidget.js');
 const widgetSource = fs.readFileSync(widgetPath, 'utf8');
 const entryMarker = '// __FORDWIDGET_ENTRY__';
@@ -224,11 +230,11 @@ async function prepared(h, vehicle = prefs(), snapshot = cache()) {
 }
 
 test('pinned original source remains the exact reviewed upstream byte copy', () => {
-  assert.equal(crypto.createHash('sha256').update(baselineSource).digest('hex'), '2b3502240739b036746c3ad42a247c40e7c0de2ef1612789f60c8125dcfde2a6');
+  assert.equal(crypto.createHash('sha256').update(pinnedSource).digest('hex'), '2b3502240739b036746c3ad42a247c40e7c0de2ef1612789f60c8125dcfde2a6');
 });
 
-test('original and current built-in offline self-tests both pass without network', () => {
-  for (const h of [scriptable(baselineSource, true), scriptable(widgetSource)]) { h.api.selfTest(); assert.equal(h.state.requests.length, 0); }
+test('pinned original, reviewed inherited fixes and current self-tests pass without network', () => {
+  for (const h of [scriptable(pinnedSource, true), scriptable(baselineSource, true), scriptable(widgetSource)]) { h.api.selfTest(); assert.equal(h.state.requests.length, 0); }
 });
 
 test('original field names, commands and v1 endpoints remain unchanged; add-on storage is isolated', () => {
@@ -270,14 +276,14 @@ test('the renamed app reuses existing preferences, sign-in tokens, photo and tel
   assert.deepEqual(plain(h.api.COMMANDS), plain(b.api.COMMANDS));
   assert.equal(h.state.requests.length, 0); assert.equal(h.state.safari.length, 0); assert.equal(h.state.alerts.length, 0);
   assert.deepEqual(Array.from(h.state.secrets), secrets); assert.equal(h.state.files.get(app.store.path), cacheText);
-  assert.match(widgetSource.slice(0, 150), /FordWidget Pro Power 0\.1\.7/);
+  assert.match(widgetSource.slice(0, 150), /FordWidget Pro Power 0\.1\.8/);
   assert.doesNotMatch(widgetSource.slice(0, 150), /FordWidget Pro Power Preview/);
   app.store.release();
 });
 
-test('original source changes remain limited to the approved refresh, observation and fuel edits', () => {
+test('Pro Power edits beyond the reviewed inherited fixes remain limited to approved refresh, observation and fuel edits', () => {
   const b = scriptable(baselineSource, true).api, p = scriptable(widgetSource).api;
-  const excluded = { WidgetRenderer: new Set(['build', 'buttons']), FordAuthManager: new Set(['backoff']), FordAPIClient: new Set(['getVehicleStatus']), AppController: new Set(['action', 'run']) };
+  const excluded = { WidgetRenderer: new Set(['build', 'buttons']), FordAuthManager: new Set(['backoff']), FordAPIClient: new Set(['getVehicleStatus', 'postCommand', 'sendCommand']), AppController: new Set(['action', 'run']) };
   for (const name of ['LocalStore', 'FordAuthManager', 'FordAPIClient', 'WidgetRenderer', 'AppController']) {
     for (const method of Object.getOwnPropertyNames(b[name].prototype)) {
       if (method === 'constructor' || excluded[name]?.has(method)) continue;
@@ -294,6 +300,14 @@ test('original source changes remain limited to the approved refresh, observatio
   assert.equal(p.FordAPIClient.prototype.getVehicleStatus.toString(), b.FordAPIClient.prototype.getVehicleStatus.toString()
     .replace('async getVehicleStatus()', 'async getVehicleStatus(force = false)').replace('if (c.nextFetch > now())', 'if (!force && c.nextFetch > now())'),
   'Only an explicit local-cooldown bypass may change ordinary telemetry reading');
+  assert.equal(p.FordAPIClient.prototype.postCommand.toString(), b.FordAPIClient.prototype.postCommand.toString().replace(
+    "const data = await this.auth.request('commands', `${SETTINGS.autonomic}/command/vehicles/${vin}/commands`, 'POST',",
+    "const scope = command === 'refresh' ? 'commands.generalStatus' : 'commands';\n    const data = await this.auth.request(scope, `${SETTINGS.autonomic}/command/vehicles/${vin}/commands`, 'POST',"),
+  'Only the shared general-status backoff scope may change dispatch');
+  assert.equal(p.FordAPIClient.prototype.sendCommand.toString(), b.FordAPIClient.prototype.sendCommand.toString().replace(
+    "    this.auth.gate('commands');\n    let c = this.store.read() || { version: 1, vin, fields: {} };",
+    "    this.auth.gate('commands');\n    if (command === 'refresh') this.auth.gate('commands.generalStatus');\n    let c = this.store.read() || { version: 1, vin, fields: {} };"),
+  'Only the general-status server gate may change legacy Wake; other controls retain their behavior');
   assert.equal(p.FordAuthManager.prototype.backoff.toString(), b.FordAuthManager.prototype.backoff.toString().replace(
     "secretSet('gate.' + name, { failures, next: now() + delay });",
     "secretSet('gate.' + name, { failures, next: now() + delay,\n      httpStatus: typeof status === 'number' && Number.isInteger(status) && (status === 0 || status >= 100 && status <= 599) ? status : null, failedAt: now() });"),
@@ -682,7 +696,7 @@ test('raw-signal details and reviewed report copy retain energy as raw data and 
       const report = JSON.parse(displayed);
       assert.equal(report.estimates.a, 0); assert.equal(report.estimates.b, null); assert.equal(report.estimates.total, null);
       assert.equal(report.embeddedSampleAgeSeconds, null);
-      assert.equal(report.reportVersion, 3); assert.equal(report.appVersion, '0.1.7');
+      assert.equal(report.reportVersion, 3); assert.equal(report.appVersion, '0.1.8');
       assert.equal(report.tool, 'FordWidget Pro Power'); assert.equal(Object.hasOwn(report, 'previewVersion'), false);
       assert.equal(report.refreshDiagnostics.gates['telemetry.proPower'].httpStatus, 429);
       assert.equal(report.refreshDiagnostics.gates['telemetry.proPower'].secondsRemaining, 90);
@@ -709,7 +723,7 @@ test('main and routine Pro Power menus keep optional reports in the separate Tro
     assert.deepEqual(labels.filter(label => !['Pro Power', 'Troubleshooting'].includes(label)), originalLabels, 'Every original main-menu action must remain in its original order');
     assert.equal(labels.filter(label => label === 'Troubleshooting').length, 1); assert.equal(labels.filter(label => label === 'Pro Power').length, 1);
     assert.doesNotMatch(labels.join(' '), /raw signals|redacted|report|diagnostic/i);
-    assert.match(main.title, /0\.1\.7/);
+    assert.match(main.title, /0\.1\.8/);
     const submenu = h.state.alerts[1];
     assert.deepEqual(submenu.actions.map(action => action.title), route === 'Pro Power' ?
       ['Read cached Pro Power', 'Request status once…'] : ['Vehicle data report', 'Pro Power raw signals', 'Copy redacted Pro Power report']);
@@ -792,7 +806,7 @@ test('cached refresh diagnostics expose only fixed gate names, relative timing a
   const input = JSON.stringify(c), secrets = Array.from(h.state.secrets), reads = [];
   const get = h.context.Keychain.get; h.context.Keychain.get = key => { reads.push(key); return get(key); };
   const report = plain(h.api.widgetDiagnosticContext(c, TIME));
-  assert.equal(report.appVersion, '0.1.7');
+  assert.equal(report.appVersion, '0.1.8');
   assert.equal(Object.hasOwn(report, 'previewVersion'), false);
   assert.deepEqual(Object.keys(report.gates), ['commands', 'commands.generalStatus', 'commands.proPower', 'telemetry.mobile', 'telemetry.proPower', 'auth.mobile', 'auth.autonomic']);
   assert.deepEqual(report.gates.commands, { active: true, secondsRemaining: 62, failures: 2, httpStatus: 409, failedAgeSeconds: 3 });
@@ -820,16 +834,28 @@ test('cached refresh diagnostics expose only fixed gate names, relative timing a
   assert.equal(h.state.requests.length, 0); assert.equal(h.state.files.size, 0);
 });
 
-test('passive status diagnostic exposes aggregation freezes, raw seconds and unknown/history evidence without fixing or mutating them', () => {
+test('passive status diagnostic reports component merging, legacy uncertainty and raw time/history evidence without saving data', () => {
   const h = scriptable(widgetSource), f = statusFixture();
   const beforeJSON = JSON.stringify(f.before), rawJSON = JSON.stringify(f.raw);
   const report = h.api.statusDiagnosticReport(f.raw, f.before, VIN, TIME);
   assert.equal(report.normalizedCandidate.lock.value.value, 'Locked');
   assert.equal(report.normalizedCandidate.doors.value.value, 'Closed');
   assert.equal(report.normalizedCandidate.doors.at.normalizerAtMs, f.quiet);
-  assert.equal(report.wouldMerge.lock.value.value, 'Unlocked'); assert.equal(report.wouldMerge.doors.value.value, 'Ajar');
+  assert.equal(report.wouldMerge.lock.value.value, 'Unknown'); assert.equal(report.wouldMerge.doors.value.value, 'Unknown',
+    'Partial healthy readings cannot attribute an old aggregate-only unsafe state to one component');
   assert.deepEqual(plain(report.cachedAfter), plain(report.before));
   assert.equal(JSON.stringify(f.before), beforeJSON); assert.equal(JSON.stringify(f.raw), rawJSON);
+
+  const knownBefore = plain(f.before), previousRaw = plain(f.raw);
+  previousRaw.metrics.doorLockStatus[0] = { vehicleDoor: 'FRONT_LEFT', value: 'UNLOCKED', updateTime: f.iso(f.old) };
+  previousRaw.metrics.doorStatus[0] = { vehicleDoor: 'FRONT_LEFT', value: 'AJAR', updateTime: f.iso(f.old) };
+  const knownFields = h.api.normalize(previousRaw, VIN, 'FordPass', TIME);
+  knownBefore.fields.lock = knownFields.lock; knownBefore.fields.doors = knownFields.doors;
+  const knownJSON = JSON.stringify(knownBefore);
+  const corrected = h.api.statusDiagnosticReport(f.raw, knownBefore, VIN, TIME);
+  assert.equal(corrected.wouldMerge.lock.value.value, 'Locked'); assert.equal(corrected.wouldMerge.doors.value.value, 'Closed');
+  assert.equal(corrected.wouldMerge.doors.at.normalizerAtMs, f.quiet, 'An unchanged old hood no longer freezes a newer door transition');
+  assert.equal(JSON.stringify(knownBefore), knownJSON); assert.deepEqual(plain(corrected.cachedAfter), plain(corrected.before));
 
   const seconds = f.fresh / 1000, numeric = plain(f.raw);
   numeric.updateTime = seconds;
@@ -840,23 +866,24 @@ test('passive status diagnostic exposes aggregation freezes, raw seconds and unk
   const time = numericReport.raw.doorLockStatus.items[0].updateTime;
   assert.equal(time.rawValue, seconds); assert.equal(time.format, 'epoch_seconds');
   assert.match(time.asMillisecondsISO, /^1970-/); assert.equal(time.asEpochSecondsISO, f.iso(f.fresh));
-  assert.equal(numericReport.wouldMerge.lock.value.value, 'Unlocked');
+  assert.equal(numericReport.wouldMerge.lock.value.value, 'Unknown');
 
   const unknown = plain(f.raw);
   unknown.metrics.doorLockStatus = [{ vehicleDoor: 'ALL_DOORS', value: 'UNKNOWN', updateTime: f.iso(f.fresh) }];
   unknown.metrics.doorStatus = [{ vehicleDoor: 'FRONT_LEFT', value: 'UNKNOWN', updateTime: f.iso(f.fresh) }];
   unknown.metrics.hoodStatus.value = 'UNKNOWN';
   const unknownReport = h.api.statusDiagnosticReport(unknown, f.before, VIN, TIME);
-  assert.equal(unknownReport.normalizedCandidate.lock, null); assert.equal(unknownReport.normalizedCandidate.doors, null);
+  assert.equal(unknownReport.normalizedCandidate.lock.value.value, 'Unknown'); assert.equal(unknownReport.normalizedCandidate.doors.value.value, 'Unknown');
   assert.equal(unknownReport.raw.doorStatus.items[0].value.value, 'UNKNOWN');
-  assert.equal(unknownReport.wouldMerge.doors.value.value, 'Ajar');
+  assert.equal(unknownReport.wouldMerge.doors.value.value, 'Unknown');
 
   const history = plain(f.raw);
   history.metrics.doorLockStatus = [{ vehicleDoor: 'ALL_DOORS', value: 'UNLOCKED', updateTime: f.iso(f.old) }, { vehicleDoor: 'ALL_DOORS', value: 'LOCKED', updateTime: f.iso(f.fresh) }];
   history.metrics.doorStatus = [{ vehicleDoor: 'FRONT_LEFT', value: 'OPEN', updateTime: f.iso(f.old) }, { vehicleDoor: 'FRONT_LEFT', value: 'CLOSED', updateTime: f.iso(f.fresh) }];
   const historyReport = h.api.statusDiagnosticReport(history, f.before, VIN, TIME);
   assert.deepEqual(plain(historyReport.raw.doorStatus.items.map(item => item.value.value)), ['OPEN', 'CLOSED']);
-  assert.equal(historyReport.normalizedCandidate.doors.value.value, 'Ajar'); assert.equal(historyReport.normalizedCandidate.lock.value.value, 'Unlocked');
+  assert.equal(historyReport.normalizedCandidate.doors.value.value, 'Closed'); assert.equal(historyReport.normalizedCandidate.lock.value.value, 'Locked',
+    'Newer values replace history only for the same identified component');
   assert.equal(h.state.requests.length, 0);
 });
 
@@ -1017,11 +1044,11 @@ test('status diagnostic Preview then Copy reuses one passive v1 GET and leaves t
   h.state.choices.push('Preview report', 'Copy report', -1);
   const report = await app.vehicleStatusDiagnostic(prefs());
   assert.equal(report.readOnly, true); assert.equal(h.state.requests.length, 1); assert.equal(tokenCalls, 1);
-  assert.equal(report.reportVersion, 4); assert.equal(report.appVersion, '0.1.7'); assert.equal(report.cloudReadOutcome, 'succeeded');
+  assert.equal(report.reportVersion, 4); assert.equal(report.appVersion, '0.1.8'); assert.equal(report.cloudReadOutcome, 'succeeded');
   assert.equal(Object.hasOwn(report, 'previewVersion'), false);
   assert.equal(report.fuel.raw.fuelLevel.value.numericValue, 63);
   assert.equal(report.fuel.normalizedCandidate.fuel.value.numericValue, 63);
-  assert.equal(report.refreshDiagnostics.appVersion, '0.1.7');
+  assert.equal(report.refreshDiagnostics.appVersion, '0.1.8');
   assert.equal(report.refreshDiagnostics.cachedFuel.value, 63);
   const request = h.state.requests[0];
   assert.equal(request.method, 'GET'); assert.equal(request.url, 'https://api.autonomic.ai/v1/telemetry/sources/fordpass/vehicles/' + VIN);
@@ -1101,15 +1128,18 @@ test('future backoff observations retain original delays and distinguish no resp
   for (const status of [0, 400, 401, 403, 409, 429, 500]) {
     const b = scriptable(baselineSource, true), p = scriptable(widgetSource);
     const original = new b.api.FordAuthManager(new b.api.LocalStore()), changed = new p.api.FordAuthManager(new p.api.LocalStore());
+    await original.store.acquire(); await changed.store.acquire();
     for (const auth of [original, changed]) auth.backoff('commands.generalStatus', status, { response: { headers: {} } }, {});
     const oldGate = plain(b.api.secretGet('gate.commands.generalStatus')), newGate = plain(p.api.secretGet('gate.commands.generalStatus'));
     assert.deepEqual({ failures: newGate.failures, next: newGate.next }, oldGate, 'Original backoff changed for status ' + status);
     assert.equal(newGate.next - TIME, [400, 401, 403].includes(status) ? 900000 : 60000);
     assert.equal(newGate.httpStatus, status); assert.equal(newGate.failedAt, TIME);
     assert.equal(p.state.requests.length, 0); assert.equal(b.state.requests.length, 0);
+    original.store.release(); changed.store.release();
   }
   const b = scriptable(baselineSource, true), p = scriptable(widgetSource);
   const original = new b.api.FordAuthManager(new b.api.LocalStore()), changed = new p.api.FordAuthManager(new p.api.LocalStore());
+  await original.store.acquire(); await changed.store.acquire();
   for (let failure = 0; failure < 12; failure += 1) for (const auth of [original, changed]) auth.backoff('commands.generalStatus', 429, { response: { headers: {} } }, {});
   assert.equal(p.api.secretGet('gate.commands.generalStatus').failures, 10);
   assert.equal(p.api.secretGet('gate.commands.generalStatus').next - TIME, 21600000);
@@ -1117,6 +1147,7 @@ test('future backoff observations retain original delays and distinguish no resp
   for (const auth of [original, changed]) auth.backoff('commands.generalStatus', 429, { response: { headers: { 'rEtRy-AfTeR': '86400' } } }, {});
   assert.equal(p.api.secretGet('gate.commands.generalStatus').next - TIME, 86400000, 'Retry-After may exceed the six-hour exponential base cap');
   assert.equal(p.api.secretGet('gate.commands.generalStatus').next, b.api.secretGet('gate.commands.generalStatus').next);
+  original.store.release(); changed.store.release();
 
   for (const scenario of ['timeout', 'http', 'invalid-json']) {
     const h = scriptable(widgetSource), app = await prepared(h);

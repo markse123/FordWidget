@@ -5,7 +5,7 @@ import hashlib,json
 folder=Path(__file__).resolve().parent
 root=folder.parent
 out=root
-version='0.1.7'
+version='0.1.8'
 commit='1b129eb6155fa7c0a1d14592be6983366943d31b'
 base=(folder/'FordWidget.upstream.js').read_text()
 expected='2b3502240739b036746c3ad42a247c40e7c0de2ef1612789f60c8125dcfde2a6'
@@ -17,6 +17,13 @@ def replace(before,after,label):
  assert source.count(before)==1,(label,source.count(before))
  source=source.replace(before,after)
  patches.append(label)
+
+# Keep the pinned upstream byte copy intact; reviewed inherited fixes are
+# explicit overlays, separate from the optional Pro Power additions below.
+upstream_fixes=json.loads((folder/'upstream-fixes.json').read_text())
+assert upstream_fixes['upstreamCommit']==commit,'Upstream fix base changed'
+for patch in upstream_fixes['patches']:
+ replace(patch['before'],patch['after'],patch['label'])
 
 license=(root/'LICENSE').read_text()
 header='''/*
@@ -64,6 +71,12 @@ replace("Object.keys(METRICS).map(k => [k, true])","Object.keys(METRICS).map(k =
 replace("    const e = m[key]; put(field, bounded(e && e.value, max), e);", "    const e = m[key]; put(field, field === 'fuel' ? fordFuelPercent(e && e.value) : bounded(e && e.value, max), e);\n    if (field === 'fuel' && out.fuel) out.fuel.rawValue = finite(e && e.value);", 'clamp positive fuel over-read to 100 while retaining the raw percentage')
 replace("  async getVehicleStatus() {", "  async getVehicleStatus(force = false) {", 'allow an explicit full-widget cloud read')
 replace("    if (c.nextFetch > now()) return", "    if (!force && c.nextFetch > now()) return", 'manual full refresh bypasses only the local read interval')
+replace("const data = await this.auth.request('commands', `${SETTINGS.autonomic}/command/vehicles/${vin}/commands`, 'POST',",
+        "const scope = command === 'refresh' ? 'commands.generalStatus' : 'commands';\n    const data = await this.auth.request(scope, `${SETTINGS.autonomic}/command/vehicles/${vin}/commands`, 'POST',",
+        'share the server backoff for both general-status entry points')
+replace("    this.auth.gate('commands');\n    let c = this.store.read() || { version: 1, vin, fields: {} };",
+        "    this.auth.gate('commands');\n    if (command === 'refresh') this.auth.gate('commands.generalStatus');\n    let c = this.store.read() || { version: 1, vin, fields: {} };",
+        'honor the general-status server gate before legacy Wake dispatch')
 replace("secretSet('gate.' + name, { failures, next: now() + delay });", "secretSet('gate.' + name, { failures, next: now() + delay,\n      httpStatus: typeof status === 'number' && Number.isInteger(status) && (status === 0 || status >= 100 && status <= 599) ? status : null, failedAt: now() });", 'retain safe status and time for future failures without changing backoff')
 replace("['refresh', 'Refresh', 'arrow.clockwise']", "['refreshwidget', 'Refresh', 'arrow.clockwise']", 'widget Refresh runs the combined refresh while legacy Wake remains available')
 replace("    w.addSpacer();\n    const known = Object.values(this.fields)", "    if (typeof this._ppoBeforeFooter === 'function') this._ppoBeforeFooter(w);\n    w.addSpacer();\n    const known = Object.values(this.fields)", 'allow the large combined PPO section before flexible footer space')
@@ -77,6 +90,6 @@ replace('function selfTest() {\n  const assert', 'function selfTest() {\n  ppoSe
 replace("try { await new AppController().run(); }","// __FORDWIDGET_ENTRY__\ntry { await new AppController().run(); }",'mark entry for offline verification')
 file=out/'FordWidget.js'
 file.write_text(source)
-manifest={'version':version,'upstream':'https://github.com/rushilpunu/FordWidget','upstreamCommit':commit,'upstreamSHA256':expected,'outputSHA256':hashlib.sha256(source.encode()).hexdigest(),'changes':patches,'scope':'Optional Pro Power monitoring; build and offline checks perform no Ford calls'}
+manifest={'version':version,'upstream':'https://github.com/rushilpunu/FordWidget','upstreamCommit':commit,'upstreamSHA256':expected,'upstreamFixPRs':upstream_fixes['pullRequests'],'outputSHA256':hashlib.sha256(source.encode()).hexdigest(),'changes':patches,'scope':'Optional Pro Power monitoring and reviewed inherited fixes; build and offline checks perform no Ford calls'}
 (folder/'build-manifest.json').write_text(json.dumps(manifest,indent=2))
 print('Built',file.name,len(source.splitlines()),'lines; SHA256',manifest['outputSHA256'])

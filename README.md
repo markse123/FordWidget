@@ -2,7 +2,7 @@
 
 Home Screen and Lock Screen widgets for iPhone, built with [Scriptable](https://scriptable.app). This fork retains the original FordWidget features and adds optional **Pro Power Onboard monitoring**.
 
-**v0.1.7.** [Install the script](FordWidget.js) · [Setup and usage](docs/USAGE.md) · [Personal fork](https://github.com/markse123/FordWidget)
+**v0.1.8.** [Install the script](FordWidget.js) · [Setup and usage](docs/USAGE.md) · [Personal fork](https://github.com/markse123/FordWidget)
 
 ## What it includes
 
@@ -13,6 +13,8 @@ Home Screen and Lock Screen widgets for iPhone, built with [Scriptable](https://
 - One confirmed **Refresh** action from the widget to request general vehicle and Pro Power status, then read the available cloud data.
 
 Pro Power outlet or Generator Mode switching is **not implemented**. Engine controls retain their original purpose.
+
+This update also fixes location opt-out handling, unconfirmed Stop countdowns, component status merging, evening-check confidence and request ownership. Both general-status entry points share the same server cooldown. The original-project fixes are submitted as separate upstream PRs.
 
 ## Quick setup
 
@@ -46,6 +48,8 @@ Power is shown as a **last-reported estimate**, not a live meter. **Status resul
 This is an unofficial client using private Ford APIs, which can change or become unavailable. It requires an authorized account and compatible vehicle.
 
 Ford passwords are not saved. Tokens are stored through Scriptable's shared Keychain, which other installed scripts can access. Only install scripts you trust. Parked coordinates are cached while that feature is enabled. The retained remote-start weather fallback can send an approximately 1 km-rounded location to Open-Meteo when the truck's temperature reading is old. Do not share VINs, locations, credentials or unredacted screenshots of vehicle details. Start the engine only when the vehicle is safely parked outdoors.
+
+Turning **Parked location** off removes cached coordinates/place labels from the primary and backup cache and disables the location-based weather fallback. Saved Home settings stay in Keychain for re-enabling the feature.
 
 ## Upstream and license
 

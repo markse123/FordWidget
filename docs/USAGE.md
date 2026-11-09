@@ -1,6 +1,6 @@
 # FordWidget Pro Power — usage
 
-These instructions describe **v0.1.7** of [markse123/FordWidget](https://github.com/markse123/FordWidget), derived from [rushilpunu/FordWidget](https://github.com/rushilpunu/FordWidget). The complete original widget remains available, with optional Pro Power monitoring added.
+These instructions describe **v0.1.8** of [markse123/FordWidget](https://github.com/markse123/FordWidget), derived from [rushilpunu/FordWidget](https://github.com/rushilpunu/FordWidget). The complete original widget remains available, with optional Pro Power monitoring added.
 
 ## Install and connect
 
@@ -91,15 +91,21 @@ Existing limits apply:
 
 Server error backoff can require a longer wait. Combined Refresh bypasses only the local Fetch interval. A general-request cooldown still allows other available portions to run. An accepted request is distinct from matched device success; even device success does not prove every field's measurement time advanced.
 
+The general-status portion of combined Refresh and the legacy Wake action share Ford's server backoff. Switching between those actions does not bypass a `Retry-After` wait. Pro Power and unrelated controls retain their separate limits.
+
 ## Read the measurements
 
 Vehicle fields keep their individual measurement times. **View details** shows each field's source and time. **Doors** includes the hood. The large dashboard's **Oldest vehicle reading** footer summarizes the oldest known cached vehicle-field timestamp; it is separate from Pro Power timing.
+
+Door and lock readings merge by component before the overall state is calculated. An unchanged old hood reading no longer prevents a newer door transition from appearing. Partial responses keep previously reported components; unknown evidence stays unknown. Older aggregate-only Ajar/Unlocked records can display **Unknown** when a later partial response cannot identify which component changed. An unresolved prior Ajar continues to block remote start until trusted whole-vehicle evidence resolves it.
 
 Pro Power shows estimated A, B, total and capacity when the available data supports them. Estimates assume **one watt per raw unit**, corroborated on one 7.2 kW PowerBoost system with two different circuit A loads. **Both A and B have also been tested under load at the same time:** each showed a nonzero reading and the displayed total was consistent with A+B. Circuit B still needs a separate comparison against the truck's dashboard or an independent meter. Physical outlet assignments and other power variants remain unverified. Missing B is not treated as zero. Total stays unknown when the participating output data is incomplete; accumulated energy is not used as instantaneous power.
 
 **Status result** dates the Pro Power command result. The embedded power sample time is unverified. A newly successful request may still contain an older report. Ford mode has its own age; a later OFF event does not erase historical load readings. Raw signals remain available in **Troubleshooting → Pro Power raw signals**.
 
-There are no outlet or Generator Mode controls in this version. The Lock, Unlock, Start and Stop controls operate the vehicle through the retained original confirmations. Remote start first requests a lock and checks its result. Its countdown can initially be an estimate until Ford supplies a countdown reading.
+There are no outlet or Generator Mode controls in this version. The Lock, Unlock, Start and Stop controls operate the vehicle through the retained original confirmations. Remote start first requests a lock and checks its result. Its countdown can initially be an estimate until Ford supplies a countdown reading. An accepted Stop request preserves the last known running countdown and Stop control while that countdown remains valid. Newer Ford telemetry or countdown expiry ends that running display; an estimated timer is not physical confirmation that the engine stopped.
+
+The optional evening all-good notice requires explicit Locked and Closed readings with their own measurement times within five minutes. Missing, stale or unknown security readings produce limited status; reported problems still trigger alerts.
 
 iOS decides when Home Screen widgets redraw. The script requests an update after actions, but the displayed widget may lag the app's saved data. Evening checks retain the original read-only behavior and also depend on iOS scheduling.
 
@@ -116,7 +122,7 @@ This fork is isolated from the original FordWidget. Installing it for the first 
 - **Only Pro Power appears:** clear the widget's Parameter, then enable the desired original and Pro Power fields in Customize widgets. A Parameter such as `ppob` deliberately selects only that field.
 - **Readings disagree with the truck:** compare individual source times in View details, run Fetch telemetry and compare again. Reports captured at different times are not equivalent comparisons. Use combined Refresh when a new status request is needed, respecting cooldowns.
 - **A successful request still shows an old reading:** check the field's measurement time and the Pro Power Status result separately. Request completion does not guarantee a new sample.
-- **Fuel was unavailable in an earlier version:** update to v0.1.7 and Fetch telemetry. Ford can report above 100%; the fuel-only fix caps the displayed percentage at 100 and retains the raw reading. Negative or invalid values remain unknown.
+- **Fuel was unavailable in an earlier version:** update to v0.1.8 and Fetch telemetry. Ford can report above 100%; the fuel-only fix caps the displayed percentage at 100 and retains the raw reading. Negative or invalid values remain unknown.
 - **Cooling down:** wait for the indicated interval. Do not clear cooldowns or repeatedly send commands.
 - **“Already running”:** take over only if the earlier Scriptable run has actually stopped.
 - **App data changed but the widget did not:** verify the selected script and Run Script interaction setting, preview the size in Scriptable, and allow iOS to redraw it.
@@ -131,6 +137,8 @@ Inspect reports before sharing. Reports still contain vehicle states and timesta
 Passwords are not saved. Ford tokens and the username use Scriptable's shared Keychain; other installed scripts may access it. The device-local cache keeps the **legacy storage identifier** `FordWidget Pro Power Preview/ford_vehicle_cache.json` for upgrade compatibility and can retain parked coordinates while that feature is enabled. **Sign out of Ford** removes saved credentials/tokens, while telemetry, photos and widget settings remain.
 
 The retained remote-start weather fallback can query Open-Meteo with an approximately 1 km-rounded vehicle location when the truck's own temperature reading is old. It sends no Ford account or token. Location labels use the device's reverse geocoder. Troubleshooting reports are never automatically uploaded.
+
+Turning **Customize widgets → Parked location** off removes position/place data from both cache copies, hides maps/location output and disables the weather location fallback. A per-widget Parameter cannot override that app-wide privacy choice. Saved Home settings remain in Keychain for when you re-enable the feature.
 
 To uninstall, sign out, delete the script and widgets, and remove the folder with the **legacy storage identifier** `FordWidget Pro Power Preview` from Scriptable's local documents if you also want to remove saved telemetry and photos.
 

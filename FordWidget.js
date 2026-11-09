@@ -1,7 +1,7 @@
 // Variables used by Scriptable.
 // icon-color: blue; icon-glyph: truck;
 /*
-FordWidget Pro Power 0.1.7
+FordWidget Pro Power 0.1.8
 Derived from rushilpunu/FordWidget, pinned commit 1b129eb6155fa7c0a1d14592be6983366943d31b.
 All original layouts, controls, telemetry, photos and notifications remain available.
 New optional parameters: ppoa ppob ppototal ppocapacity (alias: ppo).
@@ -209,6 +209,16 @@ function secretGet(name) {
 }
 function secretSet(name, value) { Keychain.set(secretKey(name), JSON.stringify(value)); }
 function secretRemove(name) { if (Keychain.contains(secretKey(name))) Keychain.remove(secretKey(name)); }
+function parkedLocationEnabled(prefs = secretGet('vehicle')) {
+  return !!prefs && !(prefs.widget && prefs.widget.show && prefs.widget.show.parked === false);
+}
+function clearCachedLocation(cache) {
+  if (cache && typeof cache === 'object') {
+    if (cache.fields && typeof cache.fields === 'object') delete cache.fields.position;
+    delete cache.place;
+  }
+  return cache;
+}
 function requireApp() {
   if (config.runsInWidget || !config.runsInApp) throw new Error('Open this script in the Scriptable app.');
 }
@@ -329,7 +339,8 @@ class LocalStore {
   read() {
     for (const path of [this.path, this.path + '.bak']) {
       const c = this.readFile(path);
-      if (c && c.version === 1 && vinOK(c.vin) && c.fields && typeof c.fields === 'object') return c;
+      if (c && c.version === 1 && vinOK(c.vin) && c.fields && typeof c.fields === 'object')
+        return parkedLocationEnabled() ? c : clearCachedLocation(c);
     }
     return null;
   }
@@ -400,6 +411,7 @@ class LocalStore {
   }
   write(value) {
     this.assertLease();
+    if (!parkedLocationEnabled()) { this.purgeLocation(); clearCachedLocation(value); }
     const temp = this.path + '.' + this.owner;
     this.fm.writeString(temp, JSON.stringify(value));
     if (this.fm.fileExists(this.path)) {
@@ -408,6 +420,23 @@ class LocalStore {
       this.fm.remove(this.path);
     }
     this.fm.move(temp, this.path);
+  }
+  purgeLocation() {
+    this.assertLease();
+    let failed = false;
+    for (const path of [this.path, this.path + '.bak']) {
+      if (!this.fm.fileExists(path)) continue;
+      try {
+        const c = this.readFile(path);
+        if (!c || typeof c !== 'object') this.fm.remove(path);
+        else if ((c.fields && Object.prototype.hasOwnProperty.call(c.fields, 'position')) ||
+          Object.prototype.hasOwnProperty.call(c, 'place')) this.fm.writeString(path, JSON.stringify(clearCachedLocation(c)));
+      } catch (_) {
+        // If sanitizing fails, remove that copy rather than leave old coordinates recoverable.
+        try { this.fm.remove(path); } catch (__) { failed = true; }
+      }
+    }
+    if (failed) throw new Error('Saved location could not be removed. Try turning Parked location off again.');
   }
 }
 
@@ -437,7 +466,9 @@ class FordAuthManager {
     if (body !== null) r.body = encoded ? form(body) : JSON.stringify(body);
     let status = 0;
     try {
-      const raw = await r.loadString(); status = r.response ? r.response.statusCode : 0;
+      const raw = await r.loadString();
+      this.store.assertLease();
+      status = r.response ? r.response.statusCode : 0;
       if (status < 200 || status >= 300) throw new APIError(`${name}: HTTP ${status}.${name.startsWith('auth.') ? authDetail(raw) : ''}`, status);
       let data;
       try { data = raw.trim() ? JSON.parse(raw) : {}; }
@@ -452,6 +483,8 @@ class FordAuthManager {
     }
   }
   backoff(name, status, r, headers) {
+    // An older run's response must not change the current run's gates or tokens.
+    this.store.assertLease();
     if (status === 401) {
       for (const tokenName of ['official', 'mobile', 'autonomic']) {
         const saved = secretGet('token.' + tokenName);
@@ -482,7 +515,9 @@ class FordAuthManager {
     if (headers['auth-token']) r.onRedirect = () => null;
     let status = 0;
     try {
-      const data = await r.load(); status = r.response ? r.response.statusCode : 0;
+      const data = await r.load();
+      this.store.assertLease();
+      status = r.response ? r.response.statusCode : 0;
       if (status < 200 || status >= 300) throw new APIError(`${name}: HTTP ${status}.`, status);
       const rh = r.response && r.response.headers || {};
       const key = Object.keys(rh).find(k => k.toLowerCase() === 'content-type');
@@ -646,6 +681,175 @@ class FordAuthManager {
   }
 }
 
+// Door/lock aggregates retain their component readings. An unchanged old hood
+// timestamp must not prevent a newer door transition from changing the display.
+// These are measurement times, never the time a cloud response was fetched.
+function componentTime(value) {
+  const at = timestamp(value);
+  return at !== null && at <= now() ? at : null;
+}
+function componentReading(old, incoming, kind) {
+  if (!old) return incoming;
+  const unsafe = reading => ['OPEN', 'AJAR', 'UNLOCKED'].includes(reading.value);
+  // Unidentified entries (including overflow evidence) are not the same
+  // physical component. Later unnamed safe/unknown values cannot close one.
+  if (incoming.id === 'UNIDENTIFIED') {
+    if (unsafe(old) && !unsafe(incoming)) return old;
+    if (!unsafe(old) && unsafe(incoming)) return incoming;
+  }
+  const a = old.at || 0, b = incoming.at || 0;
+  if (b < a) return old;
+  if (kind === 'doors' && incoming.value === 'UNKNOWN' && (unsafe(old) || old.unresolvedUnsafe))
+    incoming = Object.assign({}, incoming, { unresolvedUnsafe: true });
+  if (kind === 'lock' && !incoming.latch && old.latch)
+    incoming = Object.assign({}, incoming, { latch: old.latch, value: old.latch === 'MECHANICAL' ? 'IGNORED' : incoming.value });
+  if (b > 0 && b === a && incoming.latch === 'MECHANICAL') return incoming;
+  const rank = value => ['OPEN', 'AJAR', 'UNLOCKED'].includes(value) ? 2 : value === 'UNKNOWN' ? 1 : 0;
+  if (b > a || b === a && rank(incoming.value) > rank(old.value)) return incoming;
+  return old;
+}
+function componentIdentity(entry, hood = false) {
+  if (hood) return 'HOOD';
+  if (!entry || typeof entry !== 'object' || typeof entry.vehicleDoor !== 'string') return 'UNIDENTIFIED';
+  const aliases = { LEFT_FRONT: 'FRONT_LEFT', RIGHT_FRONT: 'FRONT_RIGHT', LEFT_REAR: 'REAR_LEFT', RIGHT_REAR: 'REAR_RIGHT' };
+  const door = aliases[entry.vehicleDoor] || entry.vehicleDoor;
+  if (!/^[A-Z_]{1,40}$/.test(door)) return 'UNIDENTIFIED';
+  if (['UNSPECIFIED_DOOR', 'UNKNOWN_DOOR'].includes(door)) return 'UNIDENTIFIED';
+  if (!['UNSPECIFIED_FRONT', 'UNSPECIFIED_REAR'].includes(door)) return door;
+  const selectors = [entry.vehicleSide, entry.vehicleOccupantRole].filter(value => ['DRIVER', 'PASSENGER'].includes(value));
+  return selectors.length && selectors.every(value => value === selectors[0]) ? door + '|' + selectors[0] : 'UNIDENTIFIED';
+}
+function componentAdd(readings, incoming, kind) {
+  const found = readings.findIndex(reading => reading.id === incoming.id);
+  if (found >= 0) { readings[found] = componentReading(readings[found], incoming, kind); return false; }
+  if (readings.length < 64) { readings.push(incoming); return false; }
+  let marker = readings.findIndex(reading => reading.id === 'UNIDENTIFIED');
+  if (marker < 0) marker = readings.findIndex(reading => !['HOOD', 'ALL_DOORS'].includes(reading.id));
+  const evidence = [readings[marker], incoming], unsafe = evidence.filter(reading => ['OPEN', 'AJAR', 'UNLOCKED'].includes(reading.value));
+  const selected = (unsafe.length ? unsafe : evidence).reduce((chosen, reading) => (reading.at || 0) > (chosen.at || 0) ? reading : chosen);
+  readings[marker] = { id: 'UNIDENTIFIED', value: unsafe.length ? selected.value : 'UNKNOWN', at: selected.at, source: selected.source,
+    latch: null, unresolvedUnsafe: evidence.some(reading => reading.unresolvedUnsafe || ['OPEN', 'AJAR'].includes(reading.value)) };
+  return true;
+}
+function componentPacket(kind, entries, source, fetchedAt, doorList = false, hood = false) {
+  const readings = [];
+  let truncated = false;
+  for (const item of entries.slice(0, 64)) {
+    const entry = item.entry, id = componentIdentity(entry, item.hood);
+    const latchValues = kind === 'lock' && entry ? [entry.doorLatchType, entry.tags && entry.tags.DOOR_LATCH_TYPE] : [];
+    const latch = latchValues.includes('MECHANICAL') ? 'MECHANICAL' : latchValues.includes('ELECTRONIC') ? 'ELECTRONIC' : null;
+    const mechanical = latch === 'MECHANICAL';
+    if (mechanical && id === 'UNIDENTIFIED') continue;
+    const allowed = kind === 'lock' ? ['LOCKED', 'DOUBLE_LOCKED', 'UNLOCKED'] : ['CLOSED', 'OPEN', 'AJAR'];
+    let value = mechanical ? 'IGNORED' : entry && allowed.includes(entry.value) ? entry.value : 'UNKNOWN';
+    // An unnamed closed component cannot establish which previously open door
+    // closed. Keep it unknown instead of assigning identity by array position.
+    if (id === 'UNIDENTIFIED' && !['OPEN', 'AJAR', 'UNLOCKED', 'IGNORED'].includes(value)) value = 'UNKNOWN';
+    const incoming = { id, value, at: componentTime(entry && entry.updateTime), source, latch,
+      unresolvedUnsafe: kind === 'doors' && ['OPEN', 'AJAR'].includes(value) };
+    truncated = componentAdd(readings, incoming, kind) || truncated;
+  }
+  if (entries.length > 64) {
+    componentAdd(readings, { id: 'UNIDENTIFIED', value: 'UNKNOWN', at: null, source, latch: null }, kind); truncated = true;
+  }
+  return componentField(kind, { version: 1, readings, doorList, hood, truncated, legacy: null }, fetchedAt);
+}
+function componentResult(kind, readings) {
+  const active = readings.filter(reading => reading.value !== 'IGNORED');
+  const result = (value, selected, contributors = selected ? [selected] : []) => {
+    const item = selected || null;
+    const measured = contributors.length && contributors.every(reading => typeof reading.at === 'number' &&
+      Number.isFinite(reading.at) && reading.at > 0 && reading.at <= now());
+    return { value, at: item && item.at || null, source: item && item.source || null,
+      measurementAt: measured && item ? item.at : null };
+  };
+  const newest = list => list.reduce((chosen, item) => !chosen || (item.at || 0) > (chosen.at || 0) ? item : chosen, null);
+  const oldest = list => list.length && list.every(item => item.at) ? list.reduce((chosen, item) => !chosen || item.at < chosen.at ? item : chosen, null) : null;
+  const individual = active.filter(item => item.id !== 'ALL_DOORS'), all = kind === 'lock' && active.find(item => item.id === 'ALL_DOORS');
+  if (all) {
+    const newer = individual.filter(item => !all.at || item.at && item.at >= all.at);
+    const unlocked = newer.filter(item => item.value === 'UNLOCKED');
+    if (unlocked.length) return result('Unlocked', newest(unlocked));
+    const unknown = newer.filter(item => item.value === 'UNKNOWN');
+    if (unknown.length) return result('Unknown', newest(unknown));
+    // The feed does not declare a complete physical lock inventory. Individual
+    // locked readings cannot clear or freshen a whole-vehicle aggregate.
+    const value = all.value === 'UNLOCKED' ? 'Unlocked' : ['LOCKED', 'DOUBLE_LOCKED'].includes(all.value) ? 'Locked' : 'Unknown';
+    return result(value, all, value === 'Locked' ? active : [all]);
+  }
+  const allDoors = kind === 'doors' && active.find(item => item.id === 'ALL_DOORS');
+  if (allDoors) {
+    const hood = active.find(item => item.id === 'HOOD');
+    const newer = active.filter(item => item.id !== 'ALL_DOORS' && (item.id === 'HOOD' || !allDoors.at || item.at && item.at >= allDoors.at));
+    const unsafe = newer.filter(item => ['OPEN', 'AJAR'].includes(item.value));
+    if (['OPEN', 'AJAR'].includes(allDoors.value)) unsafe.push(allDoors);
+    if (unsafe.length) return result('Ajar', newest(unsafe));
+    const unknown = newer.filter(item => item.value === 'UNKNOWN');
+    if (allDoors.value === 'UNKNOWN') unknown.push(allDoors);
+    if (unknown.length || !hood) return result('Unknown', newest(unknown));
+    return result('Closed', oldest([allDoors, hood]), active);
+  }
+  const unsafe = active.filter(item => kind === 'lock' ? item.value === 'UNLOCKED' : ['OPEN', 'AJAR'].includes(item.value));
+  if (unsafe.length) return result(kind === 'lock' ? 'Unlocked' : 'Ajar', newest(unsafe));
+  const unknown = active.filter(item => item.value === 'UNKNOWN');
+  if (unknown.length || !active.length) return result('Unknown', newest(unknown));
+  return result(kind === 'lock' ? 'Locked' : 'Closed', oldest(active), active);
+}
+function componentField(kind, components, fetchedAt) {
+  let derived = componentResult(kind, components.readings);
+  if (kind === 'doors' && (!components.doorList || !components.hood) && derived.value === 'Closed')
+    derived = { value: 'Unknown', at: null, source: derived.source, measurementAt: null };
+  const legacy = components.legacy;
+  if (legacy) {
+    const covers = item => item && componentTime(item.at) !== null && (!legacy.at || item.at >= legacy.at);
+    const whole = components.readings.find(item => item.id === 'ALL_DOORS'), hood = components.readings.find(item => item.id === 'HOOD');
+    const wholeHealthy = covers(whole) && (kind === 'lock' ? ['LOCKED', 'DOUBLE_LOCKED'].includes(whole.value) :
+      whole.value === 'CLOSED' && covers(hood) && hood.value === 'CLOSED');
+    const legacyHealthy = legacy.value === (kind === 'lock' ? 'Locked' : 'Closed');
+    if (wholeHealthy || legacyHealthy && componentTime(derived.at) !== null && (!legacy.at || derived.at >= legacy.at)) components.legacy = null;
+    else if (legacyHealthy) derived = { value: legacy.value, at: legacy.at, source: legacy.source, measurementAt: legacy.measurementAt || null };
+    else if (!(derived.value === (kind === 'lock' ? 'Unlocked' : 'Ajar') && componentTime(derived.at) !== null && (!legacy.at || derived.at >= legacy.at)))
+      derived = { value: 'Unknown', at: null, source: legacy.source, measurementAt: null };
+  }
+  return Object.assign(derived, { fetchedAt, componentStatus: components });
+}
+function mergeComponentField(kind, previous, official, mobile) {
+  const components = { version: 1, readings: [], doorList: false, hood: false, truncated: false, legacy: null };
+  let fetchedAt = null;
+  for (const [index, field] of [previous, official, mobile].entries()) {
+    if (!field || typeof field !== 'object') continue;
+    if (typeof field.fetchedAt === 'number' && Number.isFinite(field.fetchedAt)) fetchedAt = Math.max(fetchedAt || 0, field.fetchedAt);
+    const packet = field.componentStatus;
+    if (!packet || packet.version !== 1 || !Array.isArray(packet.readings)) {
+      if (index === 0) components.legacy = { value: field.value, at: componentTime(field.at), source: field.source,
+        measurementAt: typeof field.measurementAt === 'number' && field.measurementAt > 0 && field.measurementAt <= now() ? timestamp(field.measurementAt) : null };
+      continue;
+    }
+    if (index === 0 && packet.legacy) components.legacy = {
+      value: packet.legacy.value, at: componentTime(packet.legacy.at),
+      source: ['FordPass', 'FordConnect'].includes(packet.legacy.source) ? packet.legacy.source : null,
+      measurementAt: typeof packet.legacy.measurementAt === 'number' && packet.legacy.measurementAt > 0 && packet.legacy.measurementAt <= now() ? timestamp(packet.legacy.measurementAt) : null
+    };
+    components.doorList = components.doorList || packet.doorList === true;
+    components.hood = components.hood || packet.hood === true;
+    components.truncated = components.truncated || packet.truncated === true;
+    for (const reading of packet.readings.slice(0, 64)) {
+      const allowed = kind === 'lock' ? ['LOCKED', 'DOUBLE_LOCKED', 'UNLOCKED', 'UNKNOWN', 'IGNORED'] : ['CLOSED', 'OPEN', 'AJAR', 'UNKNOWN'];
+      if (!reading || typeof reading.id !== 'string' || !/^[A-Z_]{1,40}(?:\|(?:DRIVER|PASSENGER))?$/.test(reading.id) || !allowed.includes(reading.value) ||
+          reading.id === 'UNIDENTIFIED' && reading.value === 'IGNORED') continue;
+      const incoming = { id: reading.id, value: reading.value, at: componentTime(reading.at),
+        source: ['FordPass', 'FordConnect'].includes(reading.source) ? reading.source : null,
+        latch: kind === 'lock' && ['MECHANICAL', 'ELECTRONIC'].includes(reading.latch) ? reading.latch : null,
+        unresolvedUnsafe: kind === 'doors' && (reading.unresolvedUnsafe === true || ['OPEN', 'AJAR'].includes(reading.value)) };
+      components.truncated = componentAdd(components.readings, incoming, kind) || components.truncated;
+    }
+    if (packet.readings.length > 64) {
+      componentAdd(components.readings, { id: 'UNIDENTIFIED', value: 'UNKNOWN', at: null, source: null, latch: null }, kind); components.truncated = true;
+    }
+  }
+  return componentField(kind, components, fetchedAt);
+}
+
 // FordConnect and the modern FordPass payload both use the Autonomic metrics schema.
 function normalize(payload, vin, source, fetchedAt) {
   const root = payload && (payload.vehicleStatus || payload);
@@ -676,21 +880,11 @@ function normalize(payload, vin, source, fetchedAt) {
     const factor = unit === 'kpa' ? 1 / 6.894757293 : unit === 'bar' ? 14.5037738 : unit === 'psi' ? 1 : null;
     if (field) put(field, v !== null && factor !== null ? bounded(v * factor, 150) : null, t);
   }
-  const locks = (Array.isArray(m.doorLockStatus) ? m.doorLockStatus : [])
-    .filter(e => !(e.tags && e.tags.DOOR_LATCH_TYPE === 'MECHANICAL'));
-  const all = locks.find(e => e.vehicleDoor === 'ALL_DOORS' && ['LOCKED', 'DOUBLE_LOCKED', 'UNLOCKED'].includes(e.value));
-  if (all) put('lock', all.value === 'UNLOCKED' ? 'Unlocked' : 'Locked', all);
-  else if (locks.length) {
-    const unlocked = locks.find(e => e.value === 'UNLOCKED');
-    if (unlocked) put('lock', 'Unlocked', unlocked);
-    else if (locks.every(e => ['LOCKED', 'DOUBLE_LOCKED'].includes(e.value)))
-      put('lock', 'Locked', { updateTime: Math.min(...locks.map(e => timestamp(e.updateTime) || 0)) });
-  }
-  const doors = (Array.isArray(m.doorStatus) ? m.doorStatus : []).concat(m.hoodStatus ? [m.hoodStatus] : []);
-  const open = doors.find(e => ['OPEN', 'AJAR'].includes(e.value));
-  if (open) put('doors', 'Ajar', open);
-  else if (doors.length && doors.every(e => e.value === 'CLOSED'))
-    put('doors', 'Closed', { updateTime: Math.min(...doors.map(e => timestamp(e.updateTime) || 0)) });
+  if (Array.isArray(m.doorLockStatus) && m.doorLockStatus.length)
+    out.lock = componentPacket('lock', m.doorLockStatus.map(entry => ({ entry })), source, fetchedAt);
+  const doorList = Array.isArray(m.doorStatus), doors = (doorList ? m.doorStatus.map(entry => ({ entry })) : [])
+    .concat(m.hoodStatus ? [{ entry: m.hoodStatus, hood: true }] : []);
+  if (doors.length) out.doors = componentPacket('doors', doors, source, fetchedAt, doorList && m.doorStatus.length > 0, !!m.hoodStatus);
   const temp = m.outsideTemperature, celsius = temp ? finite(temp.value) : null;
   put('outsideTemp', celsius !== null && celsius > -60 && celsius < 70 ? celsius : null, temp);
   const pos = m.position, loc = pos && pos.value && pos.value.location;
@@ -713,6 +907,9 @@ function mergeFields(previous, official, mobile) {
   const result = Object.assign({}, previous);
   for (const key of Object.keys(FIELD_NAMES)) {
     const a = official[key], b = mobile[key];
+    if (['lock', 'doors'].includes(key) && [previous[key], a, b].some(field => field && field.componentStatus)) {
+      result[key] = mergeComponentField(key, previous[key], a, b); continue;
+    }
     const candidate = a && b ? ((b.at || 0) > (a.at || 0) ? b : a) : a || b;
     if (!candidate) continue;
     const old = result[key];
@@ -747,6 +944,15 @@ function nightProblems(f) {
   const rs = v('remoteStart');
   if (rs && rs.until > now()) out.push('Engine running (remote start)');
   return out;
+}
+// A fresh cloud response can contain only fuel or another unrelated metric.
+// Confirm each security reading's own measurement time before an all-good notice.
+function nightSecurityFresh(fields, at = now()) {
+  return [['lock', 'Locked'], ['doors', 'Closed']].every(([key, value]) => {
+    const reading = fields && fields[key], time = reading && reading.measurementAt;
+    return reading && reading.value === value && typeof time === 'number' && Number.isFinite(time) &&
+      time > 0 && time <= at && time >= at - 5 * 60000;
+  });
 }
 
 // Only Ford's own hosts may receive the FordPass token when downloading images.
@@ -787,6 +993,7 @@ class FordAPIClient {
   }
   async getVehicleStatus(force = false) {
     this.store.assertLease();
+    if (!parkedLocationEnabled(this.prefs) || !parkedLocationEnabled()) this.store.purgeLocation();
     let c = this.store.read();
     if (!c || c.vin !== this.prefs.vin) c = { version: 1, vin: this.prefs.vin, fields: {} };
     if (!force && c.nextFetch > now()) return { cache: c, note: 'Cloud reads are cooling down. Showing cached data.' };
@@ -816,6 +1023,7 @@ class FordAPIClient {
   // Street name for the parked spot. Apple's geocoder, app runs only, only when the truck moved.
   async updatePlace() {
     this.store.assertLease();
+    if (!parkedLocationEnabled(this.prefs) || !parkedLocationEnabled()) return;
     const c = this.store.read(), p = c && c.fields && c.fields.position && c.fields.position.value;
     if (!p || (c.place && meters(c.place, p) < 50 && c.place.label)) return;
     let label = null;
@@ -884,7 +1092,8 @@ class FordAPIClient {
   }
   async postCommand(vin, command, token) {
     this.store.assertLease();
-    const data = await this.auth.request('commands', `${SETTINGS.autonomic}/command/vehicles/${vin}/commands`, 'POST',
+    const scope = command === 'refresh' ? 'commands.generalStatus' : 'commands';
+    const data = await this.auth.request(scope, `${SETTINGS.autonomic}/command/vehicles/${vin}/commands`, 'POST',
       { properties: {}, tags: {}, type: COMMANDS[command], wakeUp: true }, this.auth.mobileHeaders(token));
     return this.receipt(data);
   }
@@ -893,12 +1102,15 @@ class FordAPIClient {
     if (vin !== this.prefs.vin || !vinOK(vin) || !Object.prototype.hasOwnProperty.call(COMMANDS, command)) throw new Error('Invalid VIN or command.');
     const token = await this.auth.token('autonomic');
     this.auth.gate('commands');
+    if (command === 'refresh') this.auth.gate('commands.generalStatus');
     let c = this.store.read() || { version: 1, vin, fields: {} };
     if (c.vin !== vin) throw new Error('Cache vehicle mismatch.');
     if (c.commandAfter > now()) throw new Error('A command was just sent. Wait at least 30 seconds.');
     if (command === 'refresh' && c.wakeAfter > now()) throw new Error('Wake cooldown active. Wait 15 minutes between wake attempts.');
-    if (command === 'start' && c.fields.doors && c.fields.doors.value === 'Ajar')
-      throw new Error('Cached door/hood status is ajar. Check the truck before remote start.');
+    if (command === 'start' && c.fields.doors && (c.fields.doors.value === 'Ajar' ||
+        c.fields.doors.componentStatus && (c.fields.doors.componentStatus.legacy && c.fields.doors.componentStatus.legacy.value === 'Ajar' ||
+          c.fields.doors.value === 'Unknown' && c.fields.doors.componentStatus.readings.some(reading => reading.unresolvedUnsafe))))
+      throw new Error('Door/hood status is ajar or a prior ajar reading is unresolved. Check the truck before remote start.');
     // Persist before dispatch: a killed process or ambiguous timeout must not replay.
     c.commandAfter = now() + SETTINGS.commandInterval;
     if (command === 'refresh') c.wakeAfter = now() + SETTINGS.wakeInterval;
@@ -925,7 +1137,8 @@ class FordAPIClient {
       c.lastCommand = { action: command, at: now(), id: receipt.id, outcome: 'Accepted; completion unverified' };
       // Estimated until Ford's own countdown arrives with the next read.
       if (command === 'start') c.startRun = { at: now(), until: now() + SETTINGS.startMinutes * 60000, estimated: true };
-      if (command === 'stop') c.startRun = { at: now(), until: 0 };
+      // Stop acceptance is not engine-off telemetry. Keep the existing countdown
+      // and Stop access until newer telemetry or the known countdown's expiry.
       c.nextFetch = 0; this.store.write(c);
       return `${command === 'refresh' ? 'Wake/status refresh' : command} request accepted by Ford.\nReceipt: ${receipt.id}\nVehicle completion is unverified. Fetch telemetry later to check.`;
     } catch (e) {
@@ -1205,6 +1418,8 @@ function widgetOptions(prefs, parameter) {
   // Naming metrics in the Parameter means "show only these".
   if (only.length) for (const k of Object.keys(show)) show[k] = only.includes(k);
   opts.show = show;
+  // A widget parameter cannot override the app-wide location privacy choice.
+  if (!parkedLocationEnabled(prefs)) opts.show.parked = false;
   return opts;
 }
 
@@ -1221,16 +1436,17 @@ class WidgetRenderer {
     this.run = Color.dynamic(new Color('C2410C'), new Color('EA580C'));
   }
   on(key) { return this.opts.show[key]; }
-  // A command we just sent wins over older telemetry; newer telemetry wins over the estimate.
+  // A positive start estimate wins over older telemetry; newer telemetry wins.
+  // Legacy zero-until markers from unconfirmed Stop requests are not off samples.
   remote() {
     const f = this.fields.remoteStart, est = this.cache.startRun;
     const tel = f && f.value ? f : null;
-    if (est && (!tel || (tel.at || 0) < est.at)) return est.until > now() ? { until: est.until, estimated: !!est.estimated } : null;
+    if (est && est.until > 0 && (!tel || (tel.at || 0) < est.at)) return est.until > now() ? { until: est.until, estimated: !!est.estimated } : null;
     return tel && tel.value.until > now() ? { until: tel.value.until, estimated: false } : null;
   }
   place() {
     const p = this.value('position');
-    if (!p || !this.on('parked')) return null;
+    if (!p || !this.on('parked') || !parkedLocationEnabled()) return null;
     const home = this.prefs.home;
     const near = home && meters(home, p) <= SETTINGS.homeRadius;
     const known = this.cache.place && meters(this.cache.place, p) < 50 ? this.cache.place.label : null;
@@ -1541,7 +1757,7 @@ class AppController {
       : c.image && c.image.source ? `${c.image.source} · ${age(c.image.at)}` : 'Not downloaded yet';
     lines.push(`Truck photo: ${photo}`);
     const n = c.night;
-    lines.push(`Evening check: ${!nightSettings(prefs).enabled ? 'Off' : n && n.done ? `${n.problems.length ? n.problems.join(', ') : 'All good'} · ${age(n.at)}` : 'Not run yet'}`);
+    lines.push(`Evening check: ${!nightSettings(prefs).enabled ? 'Off' : n && n.done ? `${n.problems.length ? n.problems.join(', ') : n.securityFresh === true ? 'All good' : 'Limited status; current lock/door readings not confirmed'} · ${age(n.at)}` : 'Not run yet'}`);
     if (c.lastCommand) lines.push(`Last request: ${c.lastCommand.action}\n${c.lastCommand.outcome} · ${age(c.lastCommand.at)}`);
     await message(prefs.name, lines.join('\n\n'));
   }
@@ -1591,10 +1807,12 @@ class AppController {
       c = (await new FordAPIClient(this.auth, this.store, prefs).getVehicleStatus()).cache;
       if (!c.fetchedAt || c.fetchedAt < now() - 5 * 60000) return c;
       const problems = nightProblems(c.fields);
-      c.night = Object.assign({}, c.night, { done: true, at: now(), problems }); this.store.write(c);
+      const securityFresh = nightSecurityFresh(c.fields);
+      c.night = Object.assign({}, c.night, { done: true, at: now(), problems, securityFresh }); this.store.write(c);
       if (problems.length || night.notifyOk) {
         const note = new Notification(); note.title = `${prefs.name || 'F-150'} · evening check`;
-        note.body = problems.length ? problems.join(' · ') : 'Locked, closed and all readings normal.';
+        note.body = problems.length ? problems.join(' · ') : securityFresh ? 'Locked and closed; no problems in the reported readings.'
+          : 'No problems found in available readings. Current lock/door status could not be confirmed.';
         note.openURL = new WidgetRenderer(prefs, c).url();
         try { await note.schedule(); } catch (_) { /* the widget still shows the result */ }
       }
@@ -1615,8 +1833,9 @@ class AppController {
     if (i === 2) { delete prefs.home; secretSet('vehicle', prefs); }
   }
   // No weather service polling: the truck reports its own outside temperature.
-  async startWeather() {
-    const f = (this.store.read() || {}).fields || {}, t = f.outsideTemp, p = f.position && f.position.value;
+  async startWeather(prefs = secretGet('vehicle')) {
+    const f = (this.store.read() || {}).fields || {}, t = f.outsideTemp;
+    const p = parkedLocationEnabled(prefs) && parkedLocationEnabled() && f.position && f.position.value;
     const hint = deg => deg <= 40 ? ' Cold: a full run warms the cabin.' : deg >= 85 ? ' Hot: a full run cools the cabin.' : '';
     if (t && t.at && t.at > now() - 2 * 3600000) return `Outside ${fahrenheit(t.value)}°F (truck sensor, ${age(t.at)}).${hint(fahrenheit(t.value))}`;
     if (p) {
@@ -1662,6 +1881,7 @@ class AppController {
       }
       if (i === keys.length + 3) prefs.night = Object.assign({}, prefs.night, { notifyOk: !night.notifyOk });
       secretSet('vehicle', prefs);
+      if (!parkedLocationEnabled(prefs)) this.store.purgeLocation();
       const r = () => new WidgetRenderer(prefs, this.store.read());
       if (i === keys.length + 4) await r().build('small').presentSmall();
       if (i === keys.length + 5) await r().build('medium').presentMedium();
@@ -1703,7 +1923,7 @@ class AppController {
     }
     if (!Object.prototype.hasOwnProperty.call(COMMANDS, action)) throw new Error('Unknown action.');
     const a = new Alert(); a.title = `${action === 'refresh' ? 'Wake vehicle' : action.toUpperCase()} · ${prefs.name}`;
-    const weather = action === 'start' ? await this.startWeather() : '';
+    const weather = action === 'start' ? await this.startWeather(prefs) : '';
     a.message = action === 'start' ? `${weather ? weather + '\n\n' : ''}Use only with the truck safely parked outdoors. Sends Lock, confirms that command, then requests engine start.` : action === 'refresh' ? 'Requests a modem wake/status refresh. Updated readings may take time. Limited to one attempt per 15 minutes.' : `Send ${action} to your vehicle?\n\nOnly continue if you tapped this in FordWidget.`;
     a.addAction('Send command'); a.addCancelAction('Cancel');
     if (await a.presentAlert() < 0) return;
@@ -1732,6 +1952,7 @@ class AppController {
     if (args.queryParameters.action === 'selftest') { selfTest(); await message('Self-test', 'All offline checks passed. No network calls or commands.'); return; }
     await this.store.acquire();
     try {
+      if (!parkedLocationEnabled()) this.store.purgeLocation();
       const saved = secretGet('credentials');
       if (saved && saved.password !== undefined) secretSet('credentials', { username: saved.username });
       let prefs = secretGet('vehicle');
@@ -2245,7 +2466,7 @@ WidgetRenderer.prototype.build = function(family = 'medium', notice = '') {
 
 // Local metadata only: fixed gate names, fixed cache fields, and no token reads.
 // Missing historical HTTP metadata stays unknown; a gate is not an HTTP trace.
-const FORDWIDGET_VERSION = '0.1.7';
+const FORDWIDGET_VERSION = '0.1.8';
 const WIDGET_DIAGNOSTIC_GATES = Object.freeze([
   'commands', 'commands.generalStatus', 'commands.proPower', 'telemetry.mobile',
   'telemetry.proPower', 'auth.mobile', 'auth.autonomic'
@@ -2430,7 +2651,7 @@ function statusDiagnosticFields(fields, clock) {
   const result = {};
   for (const key of ['lock', 'doors']) {
     const item = statusDiagRecord(fields) && statusDiagOwn(fields, key) && statusDiagRecord(fields[key]) ? fields[key] : null;
-    result[key] = item ? { value: statusDiagnosticEnum(item.value, key === 'lock' ? ['Locked', 'Unlocked'] : ['Closed', 'Ajar']),
+    result[key] = item ? { value: statusDiagnosticEnum(item.value, key === 'lock' ? ['Locked', 'Unlocked', 'Unknown'] : ['Closed', 'Ajar', 'Unknown']),
       source: ['FordPass', 'FordConnect'].includes(item.source) ? item.source : null,
       at: statusDiagnosticTime(item.at, clock) } : null;
   }
@@ -2888,7 +3109,7 @@ function selfTest() {
   const f = normalize(raw, vin, 'FordConnect', now());
   assert(f.fuel.value === 0 && f.oil.value === 0, 'zero fuel/oil');
   assert(Math.abs(f.fl.value - 35) < 0.01 && Math.abs(f.range.value - 62.137) < 0.01, 'units');
-  assert(!f.battery && !f.lock && !f.doors, 'unknown is not healthy/locked/closed');
+  assert(!f.battery && f.lock.value === 'Unknown' && f.doors.value === 'Unknown', 'unknown is not healthy/locked/closed');
   assert(f.fuel.at === Date.parse(time), 'measurement age');
   assert(!normalize({ metrics: { fuelLevel: { value: 10 } } }, vin, 'FordPass', now()).fuel.at, 'unknown timestamp');
   const old = { fuel: { value: 50, at: now(), source: 'FordPass' } };
@@ -2912,7 +3133,9 @@ function selfTest() {
   assert(nightProblems({ lock: { value: 'Locked' }, fl: { value: 35 } }).length === 0, 'evening all good');
   assert(widgetOptions({}, 'lock').view === 'lock' && widgetOptions({}, 'parked').view === 'parked', 'lock screen views');
   const rr = new WidgetRenderer({}, { fields: { remoteStart: { value: { until: now() + 60000 }, at: now() - 1000 } }, startRun: { at: now() - 500, until: 0 } });
-  assert(rr.remote() === null, 'stop command overrides older running telemetry');
+  assert(rr.remote() && rr.remote().until > now(), 'unconfirmed stop does not hide running telemetry');
+  const stopped = new WidgetRenderer({}, { fields: { remoteStart: { value: { until: 0 }, at: now() } }, startRun: { at: now() - 500, until: now() + 60000, estimated: true } });
+  assert(stopped.remote() === null, 'newer stopped telemetry ends the start estimate');
   let o = widgetOptions({ widget: { medium: 'controls', unit: 'bar', show: { photo: false } } }, '');
   assert(o.layout.medium === 'controls' && o.unit === 'bar' && !o.show.photo && o.show.tires, 'saved widget options');
   o = widgetOptions({}, 'fuel, tires lock psi');
