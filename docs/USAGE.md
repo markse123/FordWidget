@@ -63,7 +63,7 @@ Naming fields means **show only those fields** and overrides the shared checkbox
 | `fuel tires lock ppoa ppob ppototal` | Those original readings plus Pro Power |
 | `ppob` | Pro Power B only |
 | `buttons -photo` | Vehicle controls layout without the photo |
-| `status` | Status layout without the control grid |
+| `status` | Classic status layout without the control grid; gallery designs may retain controls |
 | `us` or `metric` | Override the widget's display preset |
 | `psi`, `kpa` or `bar` | Override tire pressure independently of the preset |
 
