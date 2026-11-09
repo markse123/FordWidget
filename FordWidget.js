@@ -1050,9 +1050,9 @@ class FordAPIClient {
     return this.auth.request('telemetry.mobile', `${SETTINGS.autonomic}/telemetry/sources/fordpass/vehicles/${this.prefs.vin}`, 'GET', null, this.auth.mobileHeaders(token));
   }
   async getVehicleStatus(force = false) {
-    this.store.assertLease();
     const vin = this.prefs.vin, validate = () => { if (force) this.refreshContext(vin); };
     validate();
+    this.store.assertLease();
     let c = this.store.read();
     if (!c || c.vin !== this.prefs.vin) c = { version: 1, vin: this.prefs.vin, fields: {} };
     if (!force && c.nextFetch > now()) return { cache: c, note: 'Cloud reads are cooling down. Showing cached data.' };
