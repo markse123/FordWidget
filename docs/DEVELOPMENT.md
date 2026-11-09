@@ -1,6 +1,6 @@
 # Development
 
-`FordWidget Pro Power.js` is the generated, installable Scriptable script for **FordWidget Pro Power v0.1.9**. The modular inputs and offline tests are in `source/`. Users install the single script; they do not need the build tools.
+`FordWidget Pro Power.js` is the generated, installable Scriptable script for **FordWidget Pro Power v0.1.10**. The modular inputs and offline tests are in `source/`. Users install the single script; they do not need the build tools.
 
 ## Build and check
 
@@ -67,6 +67,10 @@ Disabling Parked location from Customize widgets or Vehicle features / compatibi
 ## Troubleshooting data
 
 Useful redacted reports remain available through the app's **Troubleshooting** menu. Pro Power reports use cached data. The vehicle report offers one passive cloud read and does not save candidate telemetry or send a vehicle command. Both reports still contain vehicle states and times, so users should review them before sharing.
+
+Vehicle data report version 5 adds a `temperature` section to that same passive GET. It reports the whitelisted raw `outsideTemperature` value, unit labels and timestamp, then compares `before`, `normalizedCandidate`, `wouldMerge` and `cachedAfter` outside-temperature fields. It distinguishes metric timestamp provenance from the existing root-response fallback and includes the parser acceptance reason and hypothetical merge decision. A blocked, failed or rejected cloud response falls back to redacted cached temperature fields rather than discarding all diagnostic context.
+
+The temperature diagnostic observes the current parser and merger. The parser continues to interpret `outsideTemperature` as Celsius and ignore unit labels; the widget's display conversion remains unchanged. Adding raw-unit evidence does not establish a new unit mapping, refresh guarantee or fix for stale Ford measurements. It adds no status command, extra cloud read or telemetry-cache write. Reports exclude credentials, VIN, location, arbitrary payload strings and raw errors; shared states and timestamps still need user review.
 
 This repository excludes research tools, app packages, captures, screenshots, personal configurations, cached vehicle data and generated test logs. Add only deliberately reviewed source, tests and documentation. The original license and project attribution must remain intact.
 

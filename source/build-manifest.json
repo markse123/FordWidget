@@ -1,5 +1,5 @@
 {
-  "version": "0.1.9",
+  "version": "0.1.10",
   "upstream": "https://github.com/rushilpunu/FordWidget",
   "upstreamCommit": "b7f7e2866c014445b2bec831c237925d3ca61b5f",
   "upstreamSHA256": "605ba8cfba29214ad0e40f3d4b7e6b71d8fd9b9fcd0f42131ec6104485037fab",
@@ -10,7 +10,7 @@
     "https://github.com/rushilpunu/FordWidget/pull/4",
     "https://github.com/rushilpunu/FordWidget/pull/5"
   ],
-  "outputSHA256": "b253a3d5504892220524581e54098a0bdc225184050733dc26c32de9115b9dd6",
+  "outputSHA256": "3e866a36e602cf0a2859403b6dc80e95c1bb3c143491a3176268726a20206b00",
   "changes": [
     "purge disabled location before returning cooldown data",
     "guard Vehicle features changes and purge disabled location",

@@ -109,7 +109,7 @@ AppController.prototype.vehicleStatusDiagnostic = async function(prefs) {
     validate();
     if (!secretGet('token.mobile')) { await message('Vehicle data diagnostic', 'Connect FordPass first. No cloud read was sent.'); return null; }
     const choice = new Alert(); choice.title = 'Vehicle data diagnostic';
-    choice.message = 'Check the saved cooldowns and compare one passive Ford cloud read with cached fuel, door and lock readings. No vehicle command or telemetry-cache update is requested. A redacted cached report remains available if the cloud read is blocked.';
+    choice.message = 'Check the saved cooldowns and compare one passive Ford cloud read with cached temperature, fuel, door and lock readings. No vehicle command or telemetry-cache update is requested. A redacted cached report remains available if the cloud read is blocked.';
     choice.addAction('Preview report'); choice.addAction('Copy report'); choice.addCancelAction('Cancel');
     const selected = await choice.presentAlert(); if (selected < 0) return null;
     validate(); const before = this.store.read(); statusDiagValidateCache(before, vin);
@@ -125,12 +125,13 @@ AppController.prototype.vehicleStatusDiagnostic = async function(prefs) {
       try {
         report = statusDiagnosticReport(raw, before, vin, clock, after);
         report.fuel = statusFuelDiagnostic(raw, before, vin, clock, after);
+        report.temperature = statusTemperatureDiagnostic(raw, before, vin, clock, after);
       } catch (_) { report = null; cloudReadOutcome = 'response_rejected'; }
     }
     if (!report) report = { readOnly: true, before: statusDiagnosticFields(before.fields, clock),
-      cachedAfter: statusDiagnosticFields(after.fields, clock), fuel: null };
+      cachedAfter: statusDiagnosticFields(after.fields, clock), fuel: null, temperature: statusTemperatureCached(before, after, clock) };
     report.tool = 'FordWidget vehicle data diagnostic';
-    report.reportVersion = 4;
+    report.reportVersion = 5;
     report.appVersion = FORDWIDGET_VERSION;
     report.cloudReadOutcome = cloudReadOutcome;
     report.refreshDiagnostics = widgetDiagnosticContext(after, clock);
@@ -138,7 +139,7 @@ AppController.prototype.vehicleStatusDiagnostic = async function(prefs) {
     let copy = selected === 1;
     if (!copy) {
       await QuickLook.present(text); validate();
-      const next = new Alert(); next.title = 'Redacted report ready'; next.message = 'Copy this same report to share fuel/status timestamps and cooldown details. No additional cloud read is needed.';
+      const next = new Alert(); next.title = 'Redacted report ready'; next.message = 'Copy this same report to share temperature/fuel/status timestamps and cooldown details. No additional cloud read is needed.';
       next.addAction('Copy report'); next.addCancelAction('Close'); copy = await next.presentAlert() === 0;
     }
     validate();

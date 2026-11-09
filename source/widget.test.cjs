@@ -1043,7 +1043,7 @@ test('status diagnostic Preview then Copy reuses one passive v1 GET and leaves t
   h.state.choices.push('Preview report', 'Copy report', -1);
   const report = await app.vehicleStatusDiagnostic(prefs());
   assert.equal(report.readOnly, true); assert.equal(h.state.requests.length, 1); assert.equal(tokenCalls, 1);
-  assert.equal(report.reportVersion, 4); assert.equal(report.appVersion, appVersion); assert.equal(report.cloudReadOutcome, 'succeeded');
+  assert.equal(report.reportVersion, 5); assert.equal(report.appVersion, appVersion); assert.equal(report.cloudReadOutcome, 'succeeded');
   assert.equal(Object.hasOwn(report, 'previewVersion'), false);
   assert.equal(report.fuel.raw.fuelLevel.value.numericValue, 63);
   assert.equal(report.fuel.normalizedCandidate.fuel.value.numericValue, 63);
@@ -1068,7 +1068,7 @@ test('a failed or gated passive diagnostic returns safe cached context without r
     else h.api.secretSet('gate.telemetry.mobile', { failures: 1, next: TIME + 90000 });
     h.state.choices.push('Preview report', -1);
     const report = await app.vehicleStatusDiagnostic(prefs());
-    assert.equal(report.reportVersion, 4); assert.equal(report.cloudReadOutcome, 'unavailable'); assert.equal(report.fuel, null);
+    assert.equal(report.reportVersion, 5); assert.equal(report.cloudReadOutcome, 'unavailable'); assert.equal(report.fuel, null);
     assert.equal(h.state.requests.length, scenario === 'http-error' ? 1 : 0, 'A failed GET is attempted once; a historical gate permits no request');
     if (h.state.requests.length) assert.equal(h.state.requests[0].method, 'GET');
     const gate = report.refreshDiagnostics.gates['telemetry.mobile'];
