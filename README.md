@@ -103,6 +103,12 @@ Examples: `buttons -photo` · `fuel tires` · `lock oil odometer`
 
 From 9 PM (you can change this or turn it off in Customize), the first widget refresh reads the truck's last reported state once. It doesn't wake the truck, and it sends you a notification if something needs attention. iOS decides exactly when widgets refresh, so the timing is approximate. It runs inside the widget; no Shortcuts automation is needed.
 
+### Door and lock readings
+
+Door and lock components keep their individual measurement times in the local cache. Newer readings replace that same component before the overall status is calculated; partial responses retain previously reported components. An unchanged old hood reading therefore does not prevent a newer door transition from updating the status. Unknown components stay unknown, and fetch time never becomes measurement time. A whole-vehicle `ALL_DOORS` lock reading cannot be cleared or made newer by one individually locked door.
+
+Older caches contain only the overall door/lock state. If an older Ajar or Unlocked report cannot be attributed to a component, a later partial closed/locked response shows Unknown rather than assuming the unresolved component is safe. The uncertainty remains until a sufficiently dated whole-vehicle report resolves it; newer individual unsafe readings still show Ajar/Unlocked. This migration does not require clearing the cache, and an unresolved prior Ajar continues to block remote start. Previously healthy aggregate readings retain their original state and time unless newer contrary evidence arrives.
+
 ## Security & privacy
 
 **Please read before installing.**
