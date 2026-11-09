@@ -103,6 +103,8 @@ Examples: `buttons -photo` · `fuel tires` · `lock oil odometer`
 
 From 9 PM (you can change this or turn it off in Customize), the first widget refresh reads the truck's last reported state once. It doesn't wake the truck, and it sends you a notification if something needs attention. iOS decides exactly when widgets refresh, so the timing is approximate. It runs inside the widget; no Shortcuts automation is needed.
 
+The optional “all good” notice requires explicit Locked and Closed readings, each with its own measurement timestamp within the past five minutes. A fresh overall response time is not enough. Missing, unknown or older lock/door readings produce a limited-status notice instead; reported problems still trigger alerts.
+
 ### Door and lock readings
 
 Door and lock components keep their individual measurement times in the local cache. Newer readings replace that same component before the overall status is calculated; partial responses retain previously reported components. An unchanged old hood reading therefore does not prevent a newer door transition from updating the status. Unknown components stay unknown, and fetch time never becomes measurement time. A whole-vehicle `ALL_DOORS` lock reading cannot be cleared or made newer by one individually locked door.
@@ -152,6 +154,10 @@ Menu › **Sign out of Ford**, then delete the script and the `FordWidget` folde
 ## Credits
 
 Ford login and API details are based on [marq24/ha-fordpass](https://github.com/marq24/ha-fordpass), [marq24/ha-fordconnect-query](https://github.com/marq24/ha-fordconnect-query) and [itchannel/fordpass-ha](https://github.com/itchannel/fordpass-ha). Thanks to their authors.
+
+## Running tests
+
+The tests live in `tests/` and need Node 18 or newer. Run them with `node --test tests/`. They are offline: the Scriptable APIs are mocked and nothing contacts Ford. You don't need them on the phone.
 
 ## License
 

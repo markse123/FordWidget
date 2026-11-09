@@ -894,6 +894,15 @@ function nightProblems(f) {
   if (rs && rs.until > now()) out.push('Engine running (remote start)');
   return out;
 }
+// A fresh cloud response can contain only fuel or another unrelated metric.
+// Confirm each security reading's own measurement time before an all-good notice.
+function nightSecurityFresh(fields, at = now()) {
+  return [['lock', 'Locked'], ['doors', 'Closed']].every(([key, value]) => {
+    const reading = fields && fields[key], time = reading && reading.measurementAt;
+    return reading && reading.value === value && typeof time === 'number' && Number.isFinite(time) &&
+      time > 0 && time <= at && time >= at - 5 * 60000;
+  });
+}
 
 // Only Ford's own hosts may receive the FordPass token when downloading images.
 function isFordHost(url) { return /^https:\/\/(?:[a-z0-9-]+\.)*ford\.com(?::\d{1,5})?(?:[/?#]|$)/i.test(url || ''); }
@@ -1448,7 +1457,7 @@ class AppController {
       : c.image && c.image.source ? `${c.image.source} · ${age(c.image.at)}` : 'Not downloaded yet';
     lines.push(`Truck photo: ${photo}`);
     const n = c.night;
-    lines.push(`Evening check: ${!nightSettings(prefs).enabled ? 'Off' : n && n.done ? `${n.problems.length ? n.problems.join(', ') : 'All good'} · ${age(n.at)}` : 'Not run yet'}`);
+    lines.push(`Evening check: ${!nightSettings(prefs).enabled ? 'Off' : n && n.done ? `${n.problems.length ? n.problems.join(', ') : n.securityFresh === true ? 'All good' : 'Limited status; current lock/door readings not confirmed'} · ${age(n.at)}` : 'Not run yet'}`);
     if (c.lastCommand) lines.push(`Last request: ${c.lastCommand.action}\n${c.lastCommand.outcome} · ${age(c.lastCommand.at)}`);
     await message(prefs.name, lines.join('\n\n'));
   }
@@ -1498,10 +1507,12 @@ class AppController {
       c = (await new FordAPIClient(this.auth, this.store, prefs).getVehicleStatus()).cache;
       if (!c.fetchedAt || c.fetchedAt < now() - 5 * 60000) return c;
       const problems = nightProblems(c.fields);
-      c.night = Object.assign({}, c.night, { done: true, at: now(), problems }); this.store.write(c);
+      const securityFresh = nightSecurityFresh(c.fields);
+      c.night = Object.assign({}, c.night, { done: true, at: now(), problems, securityFresh }); this.store.write(c);
       if (problems.length || night.notifyOk) {
         const note = new Notification(); note.title = `${prefs.name || 'F-150'} · evening check`;
-        note.body = problems.length ? problems.join(' · ') : 'Locked, closed and all readings normal.';
+        note.body = problems.length ? problems.join(' · ') : securityFresh ? 'Locked and closed; no problems in the reported readings.'
+          : 'No problems found in available readings. Current lock/door status could not be confirmed.';
         note.openURL = new WidgetRenderer(prefs, c).url();
         try { await note.schedule(); } catch (_) { /* the widget still shows the result */ }
       }
