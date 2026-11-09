@@ -872,8 +872,7 @@ class FordAPIClient {
       c.lastCommand = { action: command, at: now(), id: receipt.id, outcome: 'Accepted; completion unverified' };
       // Estimated until Ford's own countdown arrives with the next read.
       if (command === 'start') c.startRun = { at: now(), until: now() + SETTINGS.startMinutes * 60000, estimated: true };
-      // Stop acceptance is not engine-off telemetry. Keep the existing countdown
-      // and Stop access until newer telemetry or the known countdown's expiry.
+      // Stop acceptance isn't engine-off telemetry: keep the countdown until newer telemetry or expiry.
       c.nextFetch = 0; this.store.write(c);
       return `${command === 'refresh' ? 'Wake/status refresh' : command} request accepted by Ford.\nReceipt: ${receipt.id}\nVehicle completion is unverified. Fetch telemetry later to check.`;
     } catch (e) {
@@ -927,8 +926,7 @@ class WidgetRenderer {
     this.run = Color.dynamic(new Color('C2410C'), new Color('EA580C'));
   }
   on(key) { return this.opts.show[key]; }
-  // A positive start estimate wins over older telemetry; newer telemetry wins.
-  // Legacy zero-until markers from unconfirmed Stop requests are not off samples.
+  // A start estimate wins over older telemetry; newer telemetry wins. Ignore legacy until:0 stop markers.
   remote() {
     const f = this.fields.remoteStart, est = this.cache.startRun;
     const tel = f && f.value ? f : null;
