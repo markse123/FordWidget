@@ -3,9 +3,9 @@
 // FordWidget Pro Power installer. Name this script "Install FordWidget Pro Power".
 // Review: https://github.com/markse123/FordWidget
 // Downloads one reviewed version; it never runs the widget or accesses Ford sign-in.
-const INSTALL_VERSION = '0.1.10';
-const INSTALL_SOURCE = 'https://raw.githubusercontent.com/markse123/FordWidget/964c2098a5063c3cb148d21456b5b9da4a2a2eca/FordWidget%20Pro%20Power.js';
-const INSTALL_SHA256 = '3e866a36e602cf0a2859403b6dc80e95c1bb3c143491a3176268726a20206b00';
+const INSTALL_VERSION = '0.1.11';
+const INSTALL_SOURCE = 'https://raw.githubusercontent.com/markse123/FordWidget/40bae5b8b963b0c7dbad6ee0dc251479bddc8a29/FordWidget%20Pro%20Power.js';
+const INSTALL_SHA256 = 'f865ea1480ccf65d5409cd418525fb4c4e1c7a91a5ccabef228769344f52f808';
 class InstallerError extends Error {}
 
 // SHA-256 over bytes, using only JavaScript and Scriptable's documented Data API.
