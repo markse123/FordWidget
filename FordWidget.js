@@ -611,6 +611,8 @@ function componentReading(old, incoming, kind) {
     if (!unsafe(old) && unsafe(incoming)) return incoming;
   }
   const a = old.at || 0, b = incoming.at || 0;
+  // An undated unsafe reading cannot be proven older, so it may not lose to a dated safe one.
+  if (!b && unsafe(incoming) && !unsafe(old)) return incoming;
   if (b < a) return old;
   if (kind === 'doors' && incoming.value === 'UNKNOWN' && (unsafe(old) || old.unresolvedUnsafe))
     incoming = Object.assign({}, incoming, { unresolvedUnsafe: true });
@@ -680,7 +682,7 @@ function componentResult(kind, readings) {
   const oldest = list => list.length && list.every(item => item.at) ? list.reduce((chosen, item) => !chosen || item.at < chosen.at ? item : chosen, null) : null;
   const individual = active.filter(item => item.id !== 'ALL_DOORS'), all = kind === 'lock' && active.find(item => item.id === 'ALL_DOORS');
   if (all) {
-    const newer = individual.filter(item => !all.at || item.at && item.at >= all.at);
+    const newer = individual.filter(item => !all.at || !item.at || item.at >= all.at);
     const unlocked = newer.filter(item => item.value === 'UNLOCKED');
     if (unlocked.length) return result('Unlocked', newest(unlocked));
     const unknown = newer.filter(item => item.value === 'UNKNOWN');
@@ -693,7 +695,7 @@ function componentResult(kind, readings) {
   const allDoors = kind === 'doors' && active.find(item => item.id === 'ALL_DOORS');
   if (allDoors) {
     const hood = active.find(item => item.id === 'HOOD');
-    const newer = active.filter(item => item.id !== 'ALL_DOORS' && (item.id === 'HOOD' || !allDoors.at || item.at && item.at >= allDoors.at));
+    const newer = active.filter(item => item.id !== 'ALL_DOORS' && (item.id === 'HOOD' || !allDoors.at || !item.at || item.at >= allDoors.at));
     const unsafe = newer.filter(item => ['OPEN', 'AJAR'].includes(item.value));
     if (['OPEN', 'AJAR'].includes(allDoors.value)) unsafe.push(allDoors);
     if (unsafe.length) return result('Ajar', newest(unsafe));
@@ -1311,7 +1313,7 @@ class WidgetRenderer {
     return w;
   }
   oldest() {
-    const times = Object.values(this.fields).filter(f => f && f.value !== null && f.value !== undefined).map(f => f.at);
+    const times = Object.values(this.fields).filter(f => f && f.value !== null && f.value !== undefined && f.value !== 'Unknown').map(f => f.at);
     return times.length && times.every(Boolean) ? Math.min(...times) : null;
   }
   frame(padding) {
