@@ -1,6 +1,6 @@
 # Development
 
-`FordWidget.js` is the generated, installable Scriptable script for **FordWidget Pro Power v0.1.7**. The modular inputs and offline tests are in `source/`. Users install the single script; they do not need the build tools.
+`FordWidget.js` is the generated, installable Scriptable script for **FordWidget Pro Power v0.1.8**. The modular inputs and offline tests are in `source/`. Users install the single script; they do not need the build tools.
 
 ## Build and check
 
@@ -14,16 +14,17 @@ node source/widget.test.cjs
 node source/core.test.cjs
 node source/ui.test.cjs
 node source/parser.test.cjs
+node --test tests/*.test.cjs
 node --input-type=module --check < FordWidget.js
 ```
 
 The build and tests make no Ford requests. Test requests, credentials, identifiers, positions and vehicle data are synthetic fixtures. The test runner mocks Scriptable's network, storage and UI APIs. Do not replace fixtures with actual vehicle captures or credentials.
 
-The builder verifies the pinned upstream script's SHA-256, applies explicit edits and records the generated script's hash in `source/build-manifest.json`. Running it twice should produce the same script and manifest. Commit source changes and regenerated output together.
+The builder verifies the pinned upstream script's SHA-256, applies the reviewed inherited fixes in `source/upstream-fixes.json`, then the Pro Power edits, and records the generated script's hash in `source/build-manifest.json`. Every overlay must match exactly once. Running it twice should produce the same script and manifest. Commit source changes and regenerated output together.
 
 ## Upstream relationship
 
-The original script is retained unchanged as `source/FordWidget.upstream.js`, pinned to upstream commit `1b129eb6155fa7c0a1d14592be6983366943d31b`. The repository retains upstream history and its MIT license. Source comparisons check original methods, fields, command payloads and all six default widget layouts, with documented exceptions for the combined Refresh action, fuel clamp and safe failure metadata.
+The original script is retained unchanged as `source/FordWidget.upstream.js`, pinned to upstream commit `1b129eb6155fa7c0a1d14592be6983366943d31b`. The repository retains upstream history and its MIT license. The build manifest links the five inherited-fix PRs. Source comparisons verify the pristine hash, apply those explicit fixes to the comparison baseline, then check methods, fields, command payloads and all six default widget layouts. Additional documented exceptions cover the combined Refresh action, shared general-status server gate, fuel clamp and safe failure metadata. The inherited-fix regression suites also run against the generated script.
 
 Keep upstream fixes separate from optional Pro Power behavior where possible. Updates must retain original vehicle features, opt-in Pro Power fields, per-field measurement times, command confirmations, session checks and cooldowns. A successful cloud read or command receipt must not be relabeled as a fresh measurement.
 

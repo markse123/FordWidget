@@ -36,7 +36,7 @@ function statusDiagnosticFields(fields, clock) {
   const result = {};
   for (const key of ['lock', 'doors']) {
     const item = statusDiagRecord(fields) && statusDiagOwn(fields, key) && statusDiagRecord(fields[key]) ? fields[key] : null;
-    result[key] = item ? { value: statusDiagnosticEnum(item.value, key === 'lock' ? ['Locked', 'Unlocked'] : ['Closed', 'Ajar']),
+    result[key] = item ? { value: statusDiagnosticEnum(item.value, key === 'lock' ? ['Locked', 'Unlocked', 'Unknown'] : ['Closed', 'Ajar', 'Unknown']),
       source: ['FordPass', 'FordConnect'].includes(item.source) ? item.source : null,
       at: statusDiagnosticTime(item.at, clock) } : null;
   }
