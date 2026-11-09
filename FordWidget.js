@@ -643,7 +643,8 @@ function normalize(payload, vin, source, fetchedAt) {
   const open = doors.find(e => ['OPEN', 'AJAR'].includes(e.value));
   if (open) put('doors', 'Ajar', open);
   else if (doors.length && doors.every(e => e.value === 'CLOSED'))
-    put('doors', 'Closed', { updateTime: Math.min(...doors.map(e => timestamp(e.updateTime) || 0)) }, securityMeasurementTime(doors));
+    put('doors', 'Closed', { updateTime: Math.min(...doors.map(e => timestamp(e.updateTime) || 0)) },
+      Array.isArray(m.doorStatus) && m.doorStatus.length ? securityMeasurementTime(doors) : null); // a hood alone is not door evidence
   const temp = m.outsideTemperature, celsius = temp ? finite(temp.value) : null;
   put('outsideTemp', celsius !== null && celsius > -60 && celsius < 70 ? celsius : null, temp);
   const pos = m.position, loc = pos && pos.value && pos.value.location;

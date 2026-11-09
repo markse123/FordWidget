@@ -105,6 +105,13 @@ test('explicit Locked and Closed measurements within five minutes permit the opt
   }
 });
 
+test('a hood reading alone is not fresh evidence that the doors are closed', async () => {
+  const responseMetrics = metrics(); delete responseMetrics.doorStatus;
+  const { h, result } = await evening({ responseMetrics });
+  assert.equal(result.fields.doors.value, 'Closed'); assert.equal(result.fields.doors.measurementAt, null);
+  assert.equal(result.night.securityFresh, false); assert.match(h.state.notifications[0].body, /could not be confirmed/);
+});
+
 test('known security and low-fuel problems still alert when optional positive notices are off', async () => {
   const securityProblem = await evening({ notifyOk: false, responseMetrics: metrics(TIME - 1000, { lock: 'UNLOCKED', doors: 'AJAR' }) });
   assert.deepEqual(plain(securityProblem.result.night.problems), ['Unlocked', 'Door, hood or tailgate open']);
