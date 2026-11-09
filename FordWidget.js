@@ -901,7 +901,7 @@ class FordAPIClient {
       c.lastCommand = { action: command, at: now(), id: receipt.id, outcome: 'Accepted; completion unverified' };
       // Estimated until Ford's own countdown arrives with the next read.
       if (command === 'start') c.startRun = { at: now(), until: now() + SETTINGS.startMinutes * 60000, estimated: true };
-      if (command === 'stop') c.startRun = { at: now(), until: 0 };
+      // Stop acceptance isn't engine-off telemetry: keep the countdown until newer telemetry or expiry.
       c.nextFetch = 0; this.store.write(c);
       return `${command === 'refresh' ? 'Wake/status refresh' : command} request accepted by Ford.\nReceipt: ${receipt.id}\nVehicle completion is unverified. Fetch telemetry later to check.`;
     } catch (e) {
@@ -957,11 +957,11 @@ class WidgetRenderer {
     this.run = Color.dynamic(new Color('C2410C'), new Color('EA580C'));
   }
   on(key) { return this.opts.show[key]; }
-  // A command we just sent wins over older telemetry; newer telemetry wins over the estimate.
+  // A start estimate wins over older telemetry; newer telemetry wins. Ignore legacy until:0 stop markers.
   remote() {
     const f = this.fields.remoteStart, est = this.cache.startRun;
     const tel = f && f.value ? f : null;
-    if (est && (!tel || (tel.at || 0) < est.at)) return est.until > now() ? { until: est.until, estimated: !!est.estimated } : null;
+    if (est && est.until > 0 && (!tel || (tel.at || 0) < est.at)) return est.until > now() ? { until: est.until, estimated: !!est.estimated } : null;
     return tel && tel.value.until > now() ? { until: tel.value.until, estimated: false } : null;
   }
   place() {
@@ -1534,7 +1534,9 @@ function selfTest() {
   assert(nightProblems({ lock: { value: 'Locked' }, fl: { value: 35 } }).length === 0, 'evening all good');
   assert(widgetOptions({}, 'lock').view === 'lock' && widgetOptions({}, 'parked').view === 'parked', 'lock screen views');
   const rr = new WidgetRenderer({}, { fields: { remoteStart: { value: { until: now() + 60000 }, at: now() - 1000 } }, startRun: { at: now() - 500, until: 0 } });
-  assert(rr.remote() === null, 'stop command overrides older running telemetry');
+  assert(rr.remote() && rr.remote().until > now(), 'unconfirmed stop does not hide running telemetry');
+  const stopped = new WidgetRenderer({}, { fields: { remoteStart: { value: { until: 0 }, at: now() } }, startRun: { at: now() - 500, until: now() + 60000, estimated: true } });
+  assert(stopped.remote() === null, 'newer stopped telemetry ends the start estimate');
   let o = widgetOptions({ widget: { medium: 'controls', unit: 'bar', show: { photo: false } } }, '');
   assert(o.layout.medium === 'controls' && o.unit === 'bar' && !o.show.photo && o.show.tires, 'saved widget options');
   o = widgetOptions({}, 'fuel, tires lock psi');
