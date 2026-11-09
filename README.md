@@ -2,13 +2,14 @@
 
 Home Screen and Lock Screen widgets for iPhone, built with [Scriptable](https://scriptable.app). This fork retains the original FordWidget features and adds optional **Pro Power Onboard monitoring**. Developed on a 14th-gen F-150; compatibility with other Ford models and individual features remains unverified. Electric vehicles are outside the current testing scope.
 
-**v0.1.10.** [Install on your iPhone](https://markse123.github.io/FordWidget/) · [Script source](FordWidget%20Pro%20Power.js) · [Setup and usage](docs/USAGE.md)
+**v0.1.11.** [Install on your iPhone](https://markse123.github.io/FordWidget/) · [Script source](FordWidget%20Pro%20Power.js) · [Setup and usage](docs/USAGE.md)
 
 ## What it includes
 
 - Fuel and range, tires, oil life, 12V battery, locks, doors/hood, odometer, outside temperature and parked location.
 - Ford's vehicle photo or your own image; small, medium and large Home Screen layouts; circular, rectangular and inline Lock Screen views; light and dark appearance.
 - **Widget gallery** with Classic, Showcase and Dashboard designs, selected separately for each Home Screen size.
+- **Units & formats** with US/Metric presets and independent Auto, PSI, kPa or bar tire-pressure display. Existing explicit pressure choices are preserved.
 - **Alerts & attention** with configurable evening conditions and thresholds, plus an optional Home Screen indicator based on cached readings.
 - **Vehicle features / compatibility** to review suggested readings and choose controls for your vehicle; selected commands stay unverified until you optionally test and confirm them.
 - Confirmed lock/unlock and engine start/stop actions, remote-start countdown, general wake request, evening checks and notifications, and per-widget customization.
@@ -35,6 +36,8 @@ See the [usage guide](docs/USAGE.md) for focused Pro Power widgets, refresh beha
 ## Designs, alerts and vehicle features
 
 **Widget gallery** previews Classic, Showcase and Dashboard using saved data before applying a design to a chosen Home Screen size. Classic is the default; `classic`, `showcase` and `dashboard` Parameters override the design for an individual widget.
+
+**Units & formats** sets US (miles, °F) or Metric (kilometres, °C) across widgets, details and prompts. Tire pressure is independent: Auto follows the preset (PSI for US, kPa for Metric), or choose PSI, kPa or bar. Per-widget `us`/`metric` and pressure Parameters override shared choices. Changing units reformats saved readings without fetching newer data; Pro Power W/kW and percentages stay unchanged. See the [units guide](docs/USAGE.md#units-and-formats).
 
 **Alerts & attention** controls which conditions appear in evening notifications and their tire, fuel, oil and 12V battery thresholds. The optional attention indicator shows cached issues and their age without an extra cloud read. Missing data stays unknown; iOS controls redraw and notification timing.
 

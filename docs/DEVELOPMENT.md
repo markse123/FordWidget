@@ -1,6 +1,6 @@
 # Development
 
-`FordWidget Pro Power.js` is the generated, installable Scriptable script for **FordWidget Pro Power v0.1.10**. The modular inputs and offline tests are in `source/`. Users install the single script; they do not need the build tools.
+`FordWidget Pro Power.js` is the generated, installable Scriptable script for **FordWidget Pro Power v0.1.11**. The modular inputs and offline tests are in `source/`. Users install the single script; they do not need the build tools.
 
 ## Build and check
 
@@ -58,6 +58,14 @@ New installations use the Scriptable name **FordWidget Pro Power**. Existing ins
 
 The Keychain prefix `FordWidget.ProPowerPreview.v1.` and local folder `FordWidget Pro Power Preview` are **legacy storage identifiers**, intentionally unchanged for upgrade compatibility. They remain separate from upstream FordWidget. Changing the public product name does not migrate or clear stored data. Do not copy tokens or caches between scripts.
 
+## Display units
+
+US/Metric presets are presentation settings; normalized cache values stay in miles (range/odometer), Celsius (temperature) and PSI (tire readings and alert thresholds). Render and input helpers convert at the display boundary. A preset switch must not rewrite cached values, thresholds or measurement times and must not add network requests, polling or vehicle commands.
+
+US is the unset default. Automatic tire pressure follows the effective preset: PSI for US and kPa for Metric. The saved pressure mode is Auto, PSI, kPa or bar; legacy explicit PSI/bar preferences remain intact. Per-widget `us`/`metric` presets do not override an explicit pressure choice; a widget's `psi`/`kpa`/`bar` word wins over the shared pressure mode regardless of its order relative to a preset word.
+
+All Home Screen/Lock Screen families, gallery designs and the optional Pro Power views must use the same unit helpers for vehicle readings. Details, attention/evening low-tire text, tire-threshold input and remote-start temperature/weather prompts follow the shared display settings. Percentages and Pro Power W/kW remain unchanged. Diagnostics intentionally preserve raw unit evidence and the named Fahrenheit reference rather than relabelling technical fields with the active presentation preset.
+
 ## State and settings safeguards
 
 Settings changes must recheck the active session and configured VIN after user interaction and before saving. A settings sheet opened for an earlier session or vehicle must not write into the current configuration. Lease acquisition must not clobber another run's claim; lost ownership also prevents late requests from changing shared tokens or cooldowns.
@@ -70,7 +78,7 @@ Useful redacted reports remain available through the app's **Troubleshooting** m
 
 Vehicle data report version 5 adds a `temperature` section to that same passive GET. It reports the whitelisted raw `outsideTemperature` value, unit labels and timestamp, then compares `before`, `normalizedCandidate`, `wouldMerge` and `cachedAfter` outside-temperature fields. It distinguishes metric timestamp provenance from the existing root-response fallback and includes the parser acceptance reason and hypothetical merge decision. A blocked, failed or rejected cloud response falls back to redacted cached temperature fields rather than discarding all diagnostic context.
 
-The temperature diagnostic observes the current parser and merger. The parser continues to interpret `outsideTemperature` as Celsius and ignore unit labels; the widget's display conversion remains unchanged. Adding raw-unit evidence does not establish a new unit mapping, refresh guarantee or fix for stale Ford measurements. It adds no status command, extra cloud read or telemetry-cache write. Reports exclude credentials, VIN, location, arbitrary payload strings and raw errors; shared states and timestamps still need user review.
+The temperature diagnostic observes the current parser and merger. The parser continues to interpret `outsideTemperature` as Celsius and ignore unit labels. The report's explicitly named Fahrenheit reference remains fixed for comparisons even when user-facing views select Metric; it must not be relabelled as the current widget display. Adding raw-unit evidence does not establish a new unit mapping, refresh guarantee or fix for stale Ford measurements. It adds no status command, extra cloud read or telemetry-cache write. Reports exclude credentials, VIN, location, arbitrary payload strings and raw errors; shared states and timestamps still need user review.
 
 This repository excludes research tools, app packages, captures, screenshots, personal configurations, cached vehicle data and generated test logs. Add only deliberately reviewed source, tests and documentation. The original license and project attribution must remain intact.
 

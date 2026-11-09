@@ -1,0 +1,64 @@
+{
+  "patches": [
+    {
+      "label": "add a local units and formats settings entry",
+      "before": "        ['Customize widgets', () => this.customize(prefs)],",
+      "after": "        ['Customize widgets', () => this.customize(prefs)],\n        ['Units & formats', () => this.unitsOptions(prefs)],"
+    },
+    {
+      "label": "format detail values without changing canonical cached measurements",
+      "before": "    const show = (k, v) => k === 'outsideTemp' ? `${fahrenheit(v)}\u00b0F`",
+      "after": "    const show = (k, v) => ['outsideTemp', 'range', 'odometer', 'fl', 'fr', 'rl', 'rr'].includes(k) ? displayUnitDetailValue(k, v, prefs)"
+    },
+    {
+      "label": "label detail distances and pressures in the selected display units",
+      "before": "      return `${FIELD_NAMES[k]}: ${value === null || value === undefined ? 'Unknown' : value}\\n${item ? `${item.source} \u00b7 ${item.at ? new Date(item.at).toLocaleString() : 'measurement time unknown'}` : 'Not reported'}`;",
+      "after": "      return `${displayUnitFieldLabel(k, prefs)}: ${value === null || value === undefined ? 'Unknown' : value}\\n${item ? `${item.source} \u00b7 ${item.at ? new Date(item.at).toLocaleString() : 'measurement time unknown'}` : 'Not reported'}`;"
+    },
+    {
+      "label": "format low tire notices while retaining canonical PSI comparison",
+      "before": "low.map(k => `${k.toUpperCase()} ${Math.round(v(k))} psi`).join(', ')",
+      "after": "low.map(k => displayUnitLowTire(k, v(k), prefs)).join(', ')"
+    },
+    {
+      "label": "honor per-widget units in Attention text without changing alert thresholds",
+      "before": "nightProblems(this.fields, this.prefs)",
+      "after": "nightProblems(this.fields, displayUnitPreferences(this.prefs, this.opts))"
+    },
+    {
+      "label": "label the tire alert threshold in the selected pressure format",
+      "before": "      a.addAction(`Tire threshold: below ${settings.tire} psi`);",
+      "after": "      a.addAction('Tire threshold: below ' + displayUnitTireThresholdLabel(prefs, settings.tire));"
+    },
+    {
+      "label": "convert edited tire thresholds once and preserve unchanged canonical values exactly",
+      "before": "        const values = await input('Alert threshold', `Enter a number from 0 to ${max}${key === 'tire' ? ' psi' : '%'}.`, [{ label: key, value: String(settings[key]) }]);\n        if (!values) continue;\n        const n = finite(values[0]);\n        if (n === null || n < 0 || n > max) { await message('Invalid threshold', `Enter a number from 0 to ${max}.`); continue; }\n        next[key] = n;",
+      "after": "        const threshold = displayUnitThreshold(prefs, key, settings[key], max);\n        const unit = threshold.unit === '%' ? '%' : ' ' + threshold.unit;\n        const values = await input('Alert threshold', `Enter a number from 0 to ${threshold.max}${unit}.`, [{ label: key, value: threshold.value }]);\n        if (!values) continue;\n        const n = parseDisplayUnitThreshold(values[0], threshold, settings[key]);\n        if (n === null) { await message('Invalid threshold', `Enter a number from 0 to ${threshold.max}${unit}.`); continue; }\n        next[key] = n;"
+    },
+    {
+      "label": "show Auto and all three pressure formats in the existing Customize item",
+      "before": "      a.addAction(`Tire units: ${o.unit.toUpperCase()}`);",
+      "after": "      a.addAction('Tire units: ' + displayUnitTirePreferenceLabel(prefs));"
+    },
+    {
+      "label": "extend the existing pressure cycle without shifting Customize action indices",
+      "before": "      if (i === keys.length + 1) next.unit = o.unit === 'bar' ? 'psi' : 'bar';",
+      "after": "      if (i === keys.length + 1) next.unit = nextDisplayUnitTirePreference(prefs);"
+    },
+    {
+      "label": "format recent vehicle-sensor weather while retaining Fahrenheit hint thresholds",
+      "before": "    if (t && t.at && t.at > now() - 2 * 3600000) return `Outside ${fahrenheit(t.value)}\u00b0F (vehicle sensor, ${age(t.at)}).${hint(fahrenheit(t.value))}`;",
+      "after": "    if (t && t.at && t.at > now() - 2 * 3600000) return `Outside ${displayUnitWeatherTemperature(t.value)} (vehicle sensor, ${age(t.at)}).${hint(fahrenheit(t.value))}`;"
+    },
+    {
+      "label": "format forecast weather while keeping the forecast request and hints Fahrenheit",
+      "before": "        if (v !== null) return `Outside about ${Math.round(v)}\u00b0F near the vehicle (Open-Meteo, now).${hint(Math.round(v))}`;",
+      "after": "        if (v !== null) return `Outside about ${displayUnitWeatherTemperature(v, 'f')} near the vehicle (Open-Meteo, now).${hint(Math.round(v))}`;"
+    },
+    {
+      "label": "format the stale sensor fallback without altering its measurement age",
+      "before": "    return t ? `Outside ${fahrenheit(t.value)}\u00b0F (vehicle sensor, ${age(t.at)}).` : '';",
+      "after": "    return t ? `Outside ${displayUnitWeatherTemperature(t.value)} (vehicle sensor, ${age(t.at)}).` : '';"
+    }
+  ]
+}
