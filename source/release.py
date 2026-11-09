@@ -16,7 +16,10 @@ import tempfile
 VERSION_RE = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 HASH_RE = re.compile(r"[0-9a-f]{64}")
-SOURCE_RE = re.compile(r"https://raw\.githubusercontent\.com/markse123/FordWidget/([0-9a-f]{40})/FordWidget\.js")
+WIDGET_FILE = "FordWidget Pro Power.js"
+WIDGET_URL_FILE = "FordWidget%20Pro%20Power.js"
+SOURCE_RE = re.compile(r"https://raw\.githubusercontent\.com/markse123/FordWidget/([0-9a-f]{40})/FordWidget%20Pro%20Power\.js")
+LEGACY_SOURCE_RE = re.compile(r"https://raw\.githubusercontent\.com/markse123/FordWidget/([0-9a-f]{40})/FordWidget\.js")
 
 
 def version_parts(value):
@@ -95,12 +98,12 @@ def prepare_release(root, commit=None, check=False, base=None):
     origin = git(root, "remote", "get-url", "origin").decode().strip()
     if not re.fullmatch(r"(?:https://github\.com/|git@github\.com:)markse123/FordWidget(?:\.git)?", origin):
         raise ValueError("The checkout origin must be markse123/FordWidget.")
-    paths = {name: root / name for name in ["FordWidget.js", "source/version.json", "source/build-manifest.json", "docs/installer.js"]}
+    paths = {name: root / name for name in [WIDGET_FILE, "source/version.json", "source/build-manifest.json", "docs/installer.js"]}
     if any(path.is_symlink() or not path.is_file() for path in paths.values()):
         raise ValueError("Release inputs must be regular files in this checkout.")
     version_bytes = paths["source/version.json"].read_bytes()
     manifest_bytes = paths["source/build-manifest.json"].read_bytes()
-    widget = paths["FordWidget.js"].read_bytes()
+    widget = paths[WIDGET_FILE].read_bytes()
     version = read_version(version_bytes)
     manifest = metadata(manifest_bytes)
     digest = hashlib.sha256(widget).hexdigest()
@@ -113,10 +116,13 @@ def prepare_release(root, commit=None, check=False, base=None):
     old_version = constant(code, "INSTALL_VERSION")
     old_source = constant(code, "INSTALL_SOURCE")
     old_hash = constant(code, "INSTALL_SHA256")
-    if not SOURCE_RE.fullmatch(old_source) or not HASH_RE.fullmatch(old_hash):
+    source_match = SOURCE_RE.fullmatch(old_source) or LEGACY_SOURCE_RE.fullmatch(old_source)
+    if not source_match or not HASH_RE.fullmatch(old_hash):
         raise ValueError("The existing installer pin is malformed; restore a reviewed installer first.")
     comparison = (version_parts(version) > version_parts(old_version)) - (version_parts(version) < version_parts(old_version))
     if check:
+        if not SOURCE_RE.fullmatch(old_source):
+            raise ValueError("Installer source must use the canonical percent-encoded widget filename; prepare a new release pin first.")
         if comparison != 0 or old_hash != digest:
             raise ValueError("Installer release metadata is stale; prepare the reviewed release pin first.")
         commit = SOURCE_RE.fullmatch(old_source)[1]
@@ -125,7 +131,7 @@ def prepare_release(root, commit=None, check=False, base=None):
     if base is not None:
         check_version_bump(root, base, widget, version)
 
-    for name, current in [("FordWidget.js", widget), ("source/version.json", version_bytes), ("source/build-manifest.json", manifest_bytes)]:
+    for name, current in [(WIDGET_FILE, widget), ("source/version.json", version_bytes), ("source/build-manifest.json", manifest_bytes)]:
         committed = git(root, "show", commit + ":" + name)
         if committed != current:
             raise ValueError("The selected commit does not contain the current reviewed " + name + " bytes.")
@@ -143,7 +149,7 @@ def prepare_release(root, commit=None, check=False, base=None):
     if check:
         check_index(root, version, commit)
         return version, digest
-    source = "https://raw.githubusercontent.com/markse123/FordWidget/" + commit + "/FordWidget.js"
+    source = "https://raw.githubusercontent.com/markse123/FordWidget/" + commit + "/" + WIDGET_URL_FILE
     for name, value in [("INSTALL_VERSION", version), ("INSTALL_SOURCE", source), ("INSTALL_SHA256", digest)]:
         code = replace_constant(code, name, value)
     updated = code.encode("utf-8")
@@ -164,7 +170,10 @@ def prepare_release(root, commit=None, check=False, base=None):
 def check_version_bump(root, base, widget, version):
     if not isinstance(base, str) or not COMMIT_RE.fullmatch(base) or git(root, "cat-file", "-t", base).strip() != b"commit":
         raise ValueError("Use a full base commit SHA for the version-bump check.")
-    previous = git(root, "show", base + ":FordWidget.js")
+    # Only historical bases may fall back to the former filename. A present
+    # canonical file remains authoritative even when its contents are invalid.
+    base_path = WIDGET_FILE if git(root, "ls-tree", "--name-only", base, "--", WIDGET_FILE).strip() else "FordWidget.js"
+    previous = git(root, "show", base + ":" + base_path)
     previous_version = script_version(previous)
     if git(root, "ls-tree", "--name-only", base, "--", "source/version.json").strip():
         if read_version(git(root, "show", base + ":source/version.json")) != previous_version:
@@ -179,8 +188,8 @@ def check_index(root, version, commit):
         raise ValueError("The install page must be a regular docs/index.html file.")
     html = index.read_text(encoding="utf-8")
     versions = re.findall(r"Installing\s+widget\s+version\s*<strong(?:\s[^>]*)?>([^<]+)</strong>", html, re.IGNORECASE)
-    commits = re.findall(r"href=[\"']https://github\.com/markse123/FordWidget/blob/([0-9a-f]{40})/FordWidget\.js[\"']", html)
-    if [value.strip() for value in versions] != [version] or commits != [commit]:
+    links = re.findall(r"href=[\"']https://github\.com/markse123/FordWidget/blob/([0-9a-f]{40})/([^\"']+)[\"']", html)
+    if [value.strip() for value in versions] != [version] or links != [(commit, WIDGET_URL_FILE)]:
         raise ValueError("Install page version/source must match the installer release pin.")
 
 

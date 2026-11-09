@@ -4,7 +4,7 @@
 // Review: https://github.com/markse123/FordWidget
 // Downloads one reviewed version; it never runs the widget or accesses Ford sign-in.
 const INSTALL_VERSION = '0.1.9';
-const INSTALL_SOURCE = 'https://raw.githubusercontent.com/markse123/FordWidget/6e411bd27b9a499e33deca137aab71af0ce36098/FordWidget.js';
+const INSTALL_SOURCE = 'https://raw.githubusercontent.com/markse123/FordWidget/101a79a012c953fd75894f4f061f0ecb5a07cf4e/FordWidget%20Pro%20Power.js';
 const INSTALL_SHA256 = 'b253a3d5504892220524581e54098a0bdc225184050733dc26c32de9115b9dd6';
 class InstallerError extends Error {}
 
@@ -79,7 +79,7 @@ async function installFordWidget() {
   if (!config.runsInApp || config.runsInWidget) {
     await installerMessage('Open Scriptable', 'Run this installer inside the Scriptable app.'); return;
   }
-  if (!installerVersionParts(INSTALL_VERSION) || !/^https:\/\/raw\.githubusercontent\.com\/markse123\/FordWidget\/[a-f0-9]{40}\/FordWidget\.js$/.test(INSTALL_SOURCE) || !/^[a-f0-9]{64}$/.test(INSTALL_SHA256))
+  if (!installerVersionParts(INSTALL_VERSION) || !/^https:\/\/raw\.githubusercontent\.com\/markse123\/FordWidget\/[a-f0-9]{40}\/FordWidget%20Pro%20Power\.js$/.test(INSTALL_SOURCE) || !/^[a-f0-9]{64}$/.test(INSTALL_SHA256))
     throw new InstallerError('This installer has invalid release information. Copy the reviewed installer and try again.');
   const storage = new Alert(); storage.title = 'Install FordWidget Pro Power';
   storage.message = 'Choose where you keep your Scriptable scripts.';

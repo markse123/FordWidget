@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const TIME = Date.parse('2026-11-08T14:00:00.000Z');
 const VIN = '1FTFW1E50JFA00001'; // Synthetic fixture, never used on a network.
 const plain = value => JSON.parse(JSON.stringify(value));
-function load(source = fs.readFileSync(path.join(__dirname, '../FordWidget.js'), 'utf8')) {
+function load(source = fs.readFileSync(path.join(__dirname, '../FordWidget Pro Power.js'), 'utf8')) {
   const boundary = source.lastIndexOf('try { await new AppController().run(); }');
   assert.ok(boundary > 0, 'Scriptable entry boundary is required');
   const state = { clock: TIME, files: new Map(), secrets: new Map(), requests: [], responses: [],
@@ -135,7 +135,7 @@ function load(source = fs.readFileSync(path.join(__dirname, '../FordWidget.js'),
   const names = ['SETTINGS', 'COMMANDS', 'FIELD_NAMES', 'LocalStore', 'FordAuthManager', 'FordAPIClient', 'WidgetRenderer', 'AppController', 'normalize', 'mergeFields', 'nightSettings', 'nightProblems', 'widgetOptions', 'secretGet', 'secretSet', 'secretRemove', 'secretKey', 'timestamp', 'now', 'selfTest'];
   const expose = '\nglobalThis.TestAPI = {' + names.map(n => n + ': typeof ' + n + " === 'undefined' ? undefined : " + n).join(',') + '};';
   const context = vm.createContext(sandbox);
-  new vm.Script(source.slice(0, boundary) + expose, { filename: 'FordWidget.js' }).runInContext(context);
+  new vm.Script(source.slice(0, boundary) + expose, { filename: 'FordWidget Pro Power.js' }).runInContext(context);
   return { api: context.TestAPI, state, config, args, context, fm };
 }
 

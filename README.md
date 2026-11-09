@@ -2,7 +2,7 @@
 
 Home Screen and Lock Screen widgets for iPhone, built with [Scriptable](https://scriptable.app). This fork retains the original FordWidget features and adds optional **Pro Power Onboard monitoring**. Developed on a 14th-gen F-150; compatibility with other Ford models and individual features remains unverified. Electric vehicles are outside the current testing scope.
 
-**v0.1.9.** [Install on your iPhone](https://markse123.github.io/FordWidget/) · [Script source](FordWidget.js) · [Setup and usage](docs/USAGE.md)
+**v0.1.9.** [Install on your iPhone](https://markse123.github.io/FordWidget/) · [Script source](FordWidget%20Pro%20Power.js) · [Setup and usage](docs/USAGE.md)
 
 ## What it includes
 
@@ -22,12 +22,12 @@ This version incorporates upstream's gallery, alerts and vehicle-feature setup w
 ## Quick setup
 
 1. Install [Scriptable](https://apps.apple.com/app/scriptable/id1405459188) on your iPhone.
-2. Copy the entire [FordWidget.js script](https://raw.githubusercontent.com/markse123/FordWidget/main/FordWidget.js) into a new Scriptable script named **FordWidget Pro Power**.
+2. Copy the entire [FordWidget Pro Power.js script](https://raw.githubusercontent.com/markse123/FordWidget/main/FordWidget%20Pro%20Power.js) into a new Scriptable script named **FordWidget Pro Power**.
 3. Run it in Scriptable, enter your vehicle details locally and follow **Vehicle features / compatibility**. Then choose **Connect FordPass** and finish Ford sign-in.
 4. Run **Fetch telemetry**, then rerun **Vehicle features / compatibility** for cloud suggestions. In **Customize widgets**, choose your readings and any Pro Power fields. Use **Widget gallery** to preview a design for each size.
 5. Add a Scriptable widget. Choose **FordWidget Pro Power**, set **When Interacting → Run Script**, and leave **Parameter blank** to use the shared customization choices.
 
-For an existing installation, replace its contents and **keep its current Scriptable name** so existing widgets stay connected. Sign-in, settings and cache remain available. If you choose to rename the script, select the new name in each widget's settings. This fork stores its data separately from the original FordWidget; first-time setup requires its own sign-in.
+The downloadable file is **FordWidget Pro Power.js**. For an existing installation, replace its contents and **keep its current Scriptable name** so existing widgets stay connected; the file name does not require renaming your installed script. Sign-in, settings and cache remain available. If you choose to rename the script, select the new name in each widget's settings. This fork stores its data separately from the original FordWidget; first-time setup requires its own sign-in.
 
 See the [usage guide](docs/USAGE.md) for focused Pro Power widgets, refresh behavior, upgrades and troubleshooting. Developers can [rebuild the script and run the offline checks](docs/DEVELOPMENT.md).
 
