@@ -118,7 +118,7 @@ From 9 PM (you can change this or turn it off in Customize), the first widget re
   - `api.autonomic.ai` is Ford's vehicle cloud, used for status and commands.
   - `api.open-meteo.com` is used only for the remote‑start temperature line, and only when the truck's own reading is over 2 hours old. It receives the location rounded to about 1 km, with no account.
 - **Links can trigger a command prompt.** A web page or QR code can open a `scriptable://` link to this script, which is why every command shows a confirmation alert. Only tap **Send command** if you started it.
-- **Parked location** is stored on the phone only. Turn it off in Customize widgets.
+- **Parked location** is stored on the phone only. Turning it off in Customize widgets erases saved coordinates (your Home spot stays until you clear it).
 - **To revoke access:** choose **Sign out of Ford**, then change your Ford password. Changing the password signs out all sessions.
 - **When asking for help,** don't post your VIN, location, or screenshots of View details. Error messages never contain tokens or passwords.
 - **Remote start safety:** only start the truck when it's parked outdoors, never in a garage.

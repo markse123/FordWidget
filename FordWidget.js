@@ -763,7 +763,6 @@ class FordAPIClient {
   }
   async getVehicleStatus() {
     this.store.assertLease();
-    if (!parkedLocationEnabled(this.prefs) || !parkedLocationEnabled()) this.store.purgeLocation();
     let c = this.store.read();
     if (!c || c.vin !== this.prefs.vin) c = { version: 1, vin: this.prefs.vin, fields: {} };
     if (c.nextFetch > now()) return { cache: c, note: 'Cloud reads are cooling down. Showing cached data.' };
@@ -793,7 +792,6 @@ class FordAPIClient {
   // Street name for the parked spot. Apple's geocoder, app runs only, only when the truck moved.
   async updatePlace() {
     this.store.assertLease();
-    if (!parkedLocationEnabled(this.prefs) || !parkedLocationEnabled()) return;
     const c = this.store.read(), p = c && c.fields && c.fields.position && c.fields.position.value;
     if (!p || (c.place && meters(c.place, p) < 50 && c.place.label)) return;
     let label = null;
@@ -968,7 +966,7 @@ class WidgetRenderer {
   }
   place() {
     const p = this.value('position');
-    if (!p || !this.on('parked') || !parkedLocationEnabled()) return null;
+    if (!p || !this.on('parked')) return null;
     const home = this.prefs.home;
     const near = home && meters(home, p) <= SETTINGS.homeRadius;
     const known = this.cache.place && meters(this.cache.place, p) < 50 ? this.cache.place.label : null;
@@ -1352,9 +1350,8 @@ class AppController {
     if (i === 2) { delete prefs.home; secretSet('vehicle', prefs); }
   }
   // No weather service polling: the truck reports its own outside temperature.
-  async startWeather(prefs = secretGet('vehicle')) {
-    const f = (this.store.read() || {}).fields || {}, t = f.outsideTemp;
-    const p = parkedLocationEnabled(prefs) && parkedLocationEnabled() && f.position && f.position.value;
+  async startWeather() {
+    const f = (this.store.read() || {}).fields || {}, t = f.outsideTemp, p = f.position && f.position.value;
     const hint = deg => deg <= 40 ? ' Cold: a full run warms the cabin.' : deg >= 85 ? ' Hot: a full run cools the cabin.' : '';
     if (t && t.at && t.at > now() - 2 * 3600000) return `Outside ${fahrenheit(t.value)}°F (truck sensor, ${age(t.at)}).${hint(fahrenheit(t.value))}`;
     if (p) {
@@ -1435,7 +1432,7 @@ class AppController {
     }
     if (!Object.prototype.hasOwnProperty.call(COMMANDS, action)) throw new Error('Unknown action.');
     const a = new Alert(); a.title = `${action === 'refresh' ? 'Wake vehicle' : action.toUpperCase()} · ${prefs.name}`;
-    const weather = action === 'start' ? await this.startWeather(prefs) : '';
+    const weather = action === 'start' ? await this.startWeather() : '';
     a.message = action === 'start' ? `${weather ? weather + '\n\n' : ''}Use only with the truck safely parked outdoors. Sends Lock, confirms that command, then requests engine start.` : action === 'refresh' ? 'Requests a modem wake/status refresh. Updated readings may take time. Limited to one attempt per 15 minutes.' : `Send ${action} to your vehicle?\n\nOnly continue if you tapped this in FordWidget.`;
     a.addAction('Send command'); a.addCancelAction('Cancel');
     if (await a.presentAlert() < 0) return;

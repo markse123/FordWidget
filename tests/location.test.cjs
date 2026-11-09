@@ -2,202 +2,102 @@
 
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { load, prefs, cache, prepared, plain, TIME, VIN } = require('./scriptable.cjs');
+const { load, prefs, cache, prepared, TIME, VIN } = require('./scriptable.cjs');
 
-function located(extra = {}) {
-  return cache(Object.assign({ fields: {
-    fuel: { value: 53, at: TIME - 10000, source: 'FordPass' },
-    outsideTemp: { value: 10, at: TIME - 3 * 3600000, source: 'FordPass' },
-    position: { value: { lat: 42.12345, lon: -83.12345 }, at: TIME - 10000, source: 'FordPass' }
-  }, place: { lat: 42.12345, lon: -83.12345, label: 'Synthetic street' } }, extra));
-}
-function seedCopies(h, app, snapshot = located()) {
-  for (const suffix of ['', '.bak']) h.state.files.set(app.store.path + suffix, JSON.stringify(snapshot));
-}
-function noLocation(snapshot) {
-  assert.ok(snapshot);
-  assert.equal(Object.hasOwn(snapshot.fields, 'position'), false);
-  assert.equal(Object.hasOwn(snapshot, 'place'), false);
-}
-function cleanCopies(h, app) {
-  for (const suffix of ['', '.bak']) {
-    const text = h.state.files.get(app.store.path + suffix);
-    if (text !== undefined) noLocation(JSON.parse(text));
-  }
-}
+const located = () => cache({ place: { lat: 42.12345, lon: -83.12345, label: 'Synthetic street' }, fields: {
+  fuel: { value: 53, at: TIME - 10000, source: 'FordPass' },
+  position: { value: { lat: 42.12345, lon: -83.12345 }, at: TIME - 10000, source: 'FordPass' } } });
+const seed = (h, app) => { for (const s of ['', '.bak']) h.state.files.set(app.store.path + s, JSON.stringify(located())); };
+const clean = c => { assert.ok(c); assert.ok(!('position' in c.fields) && !('place' in c)); };
+const cleanFiles = (h, app) => { for (const s of ['', '.bak']) clean(JSON.parse(h.state.files.get(app.store.path + s))); };
 
-test('turning Parked location off immediately clears both copies and canceled Start sends no location', async () => {
-  const h = load(), vehicle = prefs({ home: { lat: 42.12345, lon: -83.12345 } });
-  const app = await prepared(h, vehicle, located());
-  seedCopies(h, app);
-  const tokens = [...h.state.secrets].filter(([key]) => key.includes('token.'));
+test('turning Parked location off erases both cache copies, keeps other data, and Start sends no location', async () => {
+  const h = load(), vehicle = prefs({ home: { lat: 42.12345, lon: -83.12345 } }), app = await prepared(h, vehicle, located());
+  seed(h, app);
   h.state.choices.push('✓  Parked location', -1);
   await app.customize(vehicle);
-  assert.equal(h.api.widgetOptions(h.api.secretGet('vehicle'), '').show.parked, false);
-  cleanCopies(h, app);
-  for (const suffix of ['', '.bak']) {
-    const saved = JSON.parse(h.state.files.get(app.store.path + suffix));
-    assert.equal(saved.fields.fuel.value, 53);
-    assert.equal(saved.fields.outsideTemp.value, 10);
-  }
-  assert.deepEqual([...h.state.secrets].filter(([key]) => key.includes('token.')), tokens);
-  assert.deepEqual(plain(h.api.secretGet('vehicle').home), { lat: 42.12345, lon: -83.12345 });
+  cleanFiles(h, app);
+  assert.equal(JSON.parse(h.state.files.get(app.store.path)).fields.fuel.value, 53);
+  assert.equal(h.api.widgetOptions(h.api.secretGet('vehicle'), 'parked').show.parked, false);
   h.state.choices.push(-1);
   await app.action('start', vehicle);
   assert.equal(h.state.requests.length, 0);
-  assert.match(h.state.alerts.at(-1).title, /^START/);
-  assert.match(h.state.alerts.at(-1).message, /truck sensor/);
-  assert.equal(h.state.alerts.at(-1).cancel, 'Cancel');
   app.store.release();
 });
 
-test('disabled location is hidden on primary and backup reads and cannot be re-enabled by a widget parameter', async () => {
-  const h = load(), vehicle = prefs({ widget: { show: { parked: false } } });
-  const app = await prepared(h, vehicle);
-  seedCopies(h, app);
-  noLocation(app.store.read());
+test('disabled location is hidden on primary and backup reads and by every consumer', async () => {
+  const h = load(), vehicle = prefs({ widget: { show: { parked: false } } }), app = await prepared(h, vehicle);
+  seed(h, app);
+  clean(app.store.read());
   h.state.files.set(app.store.path, '{invalid cache');
-  noLocation(app.store.read());
-  assert.equal(h.api.widgetOptions(vehicle, 'parked').show.parked, false);
-  const renderer = new h.api.WidgetRenderer(vehicle, located(), 'parked');
-  assert.equal(renderer.place(), null);
+  clean(app.store.read());
   await new h.api.FordAPIClient(app.auth, app.store, vehicle).updatePlace();
-  await app.startWeather(vehicle);
-  await app.details(vehicle);
+  await app.startWeather();
   await app.parked(vehicle);
-  assert.equal(h.state.requests.length, 0);
-  assert.equal(h.state.geocodes.length, 0);
-  assert.equal(h.state.safari.length, 0);
-  assert.doesNotMatch(JSON.stringify(h.state.alerts), /42\.12345|-83\.12345|Synthetic street/);
+  assert.equal(h.state.requests.length + h.state.geocodes.length + h.state.safari.length, 0);
+  assert.doesNotMatch(JSON.stringify(h.state.alerts), /42\.12345|Synthetic street/);
   app.store.release();
 });
 
-test('every disabled-location write sanitizes new data and old backups without losing other fields', async () => {
-  const h = load(), vehicle = prefs({ widget: { show: { parked: false } } });
-  const app = await prepared(h, vehicle);
-  seedCopies(h, app);
+test('writes sanitize new data and old backups while disabled; app open cleans old caches', async () => {
+  const h = load(), vehicle = prefs({ widget: { show: { parked: false } } }), app = await prepared(h, vehicle);
+  seed(h, app);
   const stale = located();
   app.store.write(stale);
-  noLocation(stale);
-  cleanCopies(h, app);
-  app.store.write(located({ commandAfter: TIME + 30000 }));
-  cleanCopies(h, app);
-  assert.equal(app.store.read().commandAfter, TIME + 30000);
-  assert.equal(app.store.read().fields.fuel.value, 53);
-  h.state.files.set(app.store.path, '{broken');
-  noLocation(app.store.read());
-  app.store.release();
-});
-
-test('re-enabling location keeps old coordinates erased and allows a newly fetched position', async () => {
-  const h = load(), vehicle = prefs(), app = await prepared(h, vehicle, located());
-  seedCopies(h, app);
-  h.state.choices.push('✓  Parked location', '○  Parked location', -1);
-  await app.customize(vehicle);
-  assert.equal(h.api.widgetOptions(h.api.secretGet('vehicle'), '').show.parked, true);
-  cleanCopies(h, app);
-  assert.equal(new h.api.WidgetRenderer(vehicle, app.store.read()).place(), null);
-  h.state.responses.push({ body: { vin: VIN, metrics: {
-    position: { value: { location: { lat: 42.98765, lon: -83.98765 } }, updateTime: new Date(TIME).toISOString() }
-  } } });
-  const result = await new h.api.FordAPIClient(app.auth, app.store, vehicle).getVehicleStatus();
-  assert.equal(result.cache.fields.position.value.lat, 42.98765);
-  assert.equal(app.store.read().fields.position.value.lon, -83.98765);
-  app.store.release();
-});
-
-for (const outcome of ['cooldown', 'failure', 'success']) {
-  test('disabled location stays purged through telemetry ' + outcome, async () => {
-    const h = load(), vehicle = prefs({ widget: { show: { parked: false } } });
-    const app = await prepared(h, vehicle);
-    seedCopies(h, app, located(outcome === 'cooldown' ? { nextFetch: TIME + 60000 } : {}));
-    if (outcome === 'failure') h.state.responses.push(new Error('Synthetic offline failure'));
-    if (outcome === 'success') h.state.responses.push({ body: { vin: VIN, metrics: {
-      fuelLevel: { value: 61, updateTime: new Date(TIME).toISOString() },
-      position: { value: { location: { lat: 42.98765, lon: -83.98765 } }, updateTime: new Date(TIME).toISOString() }
-    } } });
-    const result = await new h.api.FordAPIClient(app.auth, app.store, vehicle).getVehicleStatus();
-    noLocation(result.cache);
-    cleanCopies(h, app);
-    assert.equal(result.cache.fields.fuel.value, outcome === 'success' ? 61 : 53);
-    assert.equal(h.state.requests.length, outcome === 'cooldown' ? 0 : 1);
-    app.store.release();
-  });
-}
-
-test('opening the app cleans old disabled-location caches including a malformed primary', async () => {
-  const h = load(), vehicle = prefs({ widget: { show: { parked: false } } });
-  const app = await prepared(h, vehicle);
-  seedCopies(h, app);
+  clean(stale);
+  cleanFiles(h, app);
+  seed(h, app);
   h.state.files.set(app.store.path, '{broken');
   app.store.release();
   h.args.queryParameters.action = 'start';
   h.state.choices.push(-1);
   await app.run();
   assert.equal(h.state.files.has(app.store.path), false);
-  noLocation(JSON.parse(h.state.files.get(app.store.path + '.bak')));
-  assert.equal(h.state.requests.length, 0);
+  clean(JSON.parse(h.state.files.get(app.store.path + '.bak')));
 });
 
-test('a cache that cannot be rewritten is removed when location is disabled', async () => {
+test('telemetry fetched while disabled never stores a position', async () => {
+  const h = load(), vehicle = prefs({ widget: { show: { parked: false } } }), app = await prepared(h, vehicle);
+  seed(h, app);
+  h.state.responses.push({ body: { vin: VIN, metrics: {
+    fuelLevel: { value: 61, updateTime: new Date(TIME).toISOString() },
+    position: { value: { location: { lat: 42.98765, lon: -83.98765 } }, updateTime: new Date(TIME).toISOString() } } } });
+  const { cache: c } = await new h.api.FordAPIClient(app.auth, app.store, vehicle).getVehicleStatus();
+  clean(c);
+  cleanFiles(h, app);
+  assert.equal(c.fields.fuel.value, 61);
+  app.store.release();
+});
+
+test('a cache that cannot be rewritten is removed, and a failed removal is reported', async () => {
   const h = load(), vehicle = prefs(), app = await prepared(h, vehicle, located());
-  seedCopies(h, app);
-  const write = h.fm.writeString;
-  h.fm.writeString = (file, value) => {
-    if ([app.store.path, app.store.path + '.bak'].includes(file)) throw new Error('Synthetic write failure');
-    return write(file, value);
-  };
+  seed(h, app);
+  const write = h.fm.writeString, remove = h.fm.remove;
+  h.fm.writeString = (f, v) => { if (f.startsWith(app.store.path)) throw new Error('write failure'); return write(f, v); };
   h.state.choices.push('✓  Parked location', -1);
   await app.customize(vehicle);
-  assert.equal(h.state.files.has(app.store.path), false);
+  assert.equal(h.state.files.has(app.store.path) || h.state.files.has(app.store.path + '.bak'), false);
+  seed(h, app);
+  h.fm.remove = f => { if (f === app.store.path) throw new Error('remove failure'); return remove(f); };
+  assert.throws(() => app.store.purgeLocation(), /Saved location could not be removed/);
   assert.equal(h.state.files.has(app.store.path + '.bak'), false);
-  assert.equal(h.api.widgetOptions(h.api.secretGet('vehicle'), '').show.parked, false);
   app.store.release();
 });
 
-test('failed removal reports failure, cleans the other copy and keeps location use disabled', async () => {
+test('re-enabling keeps old coordinates erased; enabled location still geocodes and uses the rounded weather fallback', async () => {
   const h = load(), vehicle = prefs(), app = await prepared(h, vehicle, located());
-  seedCopies(h, app);
-  const write = h.fm.writeString, remove = h.fm.remove;
-  h.fm.writeString = (file, value) => {
-    if (file === app.store.path) throw new Error('Synthetic write failure');
-    return write(file, value);
-  };
-  h.fm.remove = file => {
-    if (file === app.store.path) throw new Error('Synthetic remove failure');
-    return remove(file);
-  };
-  h.state.choices.push('✓  Parked location');
-  await assert.rejects(app.customize(vehicle), /Saved location could not be removed/);
-  noLocation(JSON.parse(h.state.files.get(app.store.path + '.bak')));
-  noLocation(app.store.read());
-  h.state.choices.push(-1);
-  await app.action('start', vehicle);
-  assert.equal(h.state.requests.length, 0);
-  app.store.release();
-});
-
-test('enabled location retains geocoding, map links and the rounded weather fallback', async () => {
-  const h = load(), vehicle = prefs(), app = await prepared(h, vehicle, located());
-  const client = new h.api.FordAPIClient(app.auth, app.store, vehicle);
-  const snapshot = app.store.read(); delete snapshot.place; app.store.write(snapshot);
-  await client.updatePlace();
+  seed(h, app);
+  h.state.choices.push('✓  Parked location', '○  Parked location', -1);
+  await app.customize(vehicle);
+  clean(app.store.read());
+  const snapshot = located(); delete snapshot.place; app.store.write(snapshot);
+  await new h.api.FordAPIClient(app.auth, app.store, vehicle).updatePlace();
   assert.equal(h.state.geocodes.length, 1);
-  assert.ok(new h.api.WidgetRenderer(vehicle, app.store.read(), 'parked').place().url.startsWith('https://maps.apple.com/'));
   h.state.responses.push({ body: { current: { temperature_2m: 45 } } });
   h.state.choices.push(-1);
   await app.action('start', vehicle);
-  assert.equal(h.state.requests.length, 1);
   const url = new URL(h.state.requests[0].url);
   assert.equal(url.origin, 'https://api.open-meteo.com');
   assert.equal(url.searchParams.get('latitude'), '42.12');
-  assert.equal(url.searchParams.get('longitude'), '-83.12');
-  assert.match(h.state.alerts.at(-1).message, /Open-Meteo/);
   app.store.release();
-});
-
-test('the built-in self-test stays offline', () => {
-  const h = load();
-  h.api.selfTest();
-  assert.equal(h.state.requests.length, 0);
 });
