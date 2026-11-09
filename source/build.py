@@ -115,7 +115,7 @@ ui=(folder/'fuel-normalization.js').read_text()+'\n'+(folder/'pro-power-ui.js').
 replace('function selfTest() {',ui+'\n\nfunction selfTest() {','add optional PPO renderer and confirmed foreground UI')
 replace('function selfTest() {\n  const assert', 'function selfTest() {\n  ppoSelfCheck();\n  const assert', 'extend original offline self-test with pure PPO checks')
 replace("try { await new AppController().run(); }","// __FORDWIDGET_ENTRY__\ntry { await new AppController().run(); }",'mark entry for offline verification')
-file=out/'FordWidget.js'
+file=out/'FordWidget Pro Power.js'
 file.write_text(source)
 manifest={'version':version,'upstream':'https://github.com/rushilpunu/FordWidget','upstreamCommit':commit,'upstreamSHA256':expected,'mergedUpstreamFixPRs':merged_fix_prs,'outputSHA256':hashlib.sha256(source.encode()).hexdigest(),'changes':patches,'scope':'Optional Pro Power monitoring on current pinned upstream; build and offline checks perform no Ford calls'}
 (folder/'build-manifest.json').write_text(json.dumps(manifest,indent=2))

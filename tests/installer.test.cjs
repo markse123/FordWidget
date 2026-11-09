@@ -7,7 +7,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const root = path.resolve(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'docs/installer.js'), 'utf8');
-const widget = fs.readFileSync(path.join(root, 'FordWidget.js'), 'utf8');
+const widget = fs.readFileSync(path.join(root, 'FordWidget Pro Power.js'), 'utf8');
 const boundary = source.indexOf('// Installer entry.');
 assert.ok(boundary > 0);
 const widgetVersion = widget.match(/^FordWidget Pro Power ([^\r\n]*)\r?$/m)[1];
@@ -73,7 +73,7 @@ test('SHA-256 agrees with standard known vectors, multiblock and UTF-8 source by
   for (const text of ['', 'abc', 'a'.repeat(1000), 'Power ⚡ / café / 你好', widget])
     assert.equal(h.api.installerSHA256(Buffer.from(text, 'utf8')), crypto.createHash('sha256').update(text).digest('hex'));
   assert.equal(crypto.createHash('sha256').update(widget).digest('hex'), h.api.INSTALL_SHA256);
-  assert.match(h.api.INSTALL_SOURCE, /^https:\/\/raw\.githubusercontent\.com\/markse123\/FordWidget\/[a-f0-9]{40}\/FordWidget\.js$/);
+  assert.match(h.api.INSTALL_SOURCE, /^https:\/\/raw\.githubusercontent\.com\/markse123\/FordWidget\/[a-f0-9]{40}\/FordWidget%20Pro%20Power\.js$/);
 });
 
 test('new iCloud installation verifies pinned bytes and saves only the chosen widget script without executing it', async () => {
@@ -342,5 +342,18 @@ test('malformed installer release metadata is refused before file access or tran
     const h = load({source: code});
     await assert.rejects(run(h), /invalid release information/);
     assert.equal(h.state.requests.length, 0); assert.equal(h.state.ops.length, 0);
+  }
+});
+
+test('download source requires the canonical percent-encoded filename and never falls back to another path', async () => {
+  const commit = source.match(/^const INSTALL_SOURCE = 'https:\/\/raw\.githubusercontent\.com\/markse123\/FordWidget\/([a-f0-9]{40})\//m)[1];
+  for (const filename of ['FordWidget.js', 'FordWidget Pro Power.js', 'FordWidget+Pro+Power.js',
+    'FordWidget%2520Pro%2520Power.js', 'FordWidget%20Pro Power.js', 'FordWidget%20Pro%20Power.mjs', 'FordWidget%20Pro%20Power.js?raw=1']) {
+    const url = 'https://raw.githubusercontent.com/markse123/FordWidget/' + commit + '/' + filename;
+    const code = source.replace(/^const INSTALL_SOURCE = '[^']+';$/m, "const INSTALL_SOURCE = '" + url + "';");
+    const h = load({source: code, files: [[file(name), oldWidget]], choices: [0, 1, {name}, 0]});
+    await assert.rejects(run(h), /invalid release information/);
+    assert.equal(h.state.requests.length, 0); assert.equal(h.state.ops.length, 0);
+    assert.deepEqual([...h.state.files], [[file(name), oldWidget]]);
   }
 });

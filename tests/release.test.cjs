@@ -7,6 +7,8 @@ const path = require('node:path');
 const cp = require('node:child_process');
 const crypto = require('node:crypto');
 const root = path.resolve(__dirname, '..');
+const WIDGET_FILE = 'FordWidget Pro Power.js';
+const WIDGET_URL_FILE = 'FordWidget%20Pro%20Power.js';
 const releaseTool = fs.readFileSync(path.join(root, 'source/release.py'));
 const installerTemplate = fs.readFileSync(path.join(root, 'docs/installer.js'), 'utf8');
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
@@ -23,16 +25,16 @@ function fixture(t, options = {}) {
   const widget = '// Variables used by Scriptable.\n/*\nFordWidget Pro Power ' + (options.header || version) + '\nDerived example.\n*/\n' +
     "const FORDWIDGET_VERSION = '" + (options.runtime || version) + "';\nclass AppController {}\n// Synthetic widget, never executed.\n";
   const manifest = {version, outputSHA256: hash(widget), upstream: 'https://github.com/rushilpunu/FordWidget', ...options.manifest};
-  fs.writeFileSync(path.join(dir, 'FordWidget.js'), widget);
+  fs.writeFileSync(path.join(dir, WIDGET_FILE), widget);
   fs.writeFileSync(path.join(dir, 'source/version.json'), options.versionRaw || JSON.stringify({version}) + '\n');
   fs.writeFileSync(path.join(dir, 'source/build-manifest.json'), JSON.stringify(manifest) + '\n');
   const installer = installerTemplate
     .replace(/^const INSTALL_VERSION = '[^']+';$/m, "const INSTALL_VERSION = '" + (options.installerVersion || '0.1.8') + "';")
-    .replace(/^const INSTALL_SOURCE = '[^']+';$/m, "const INSTALL_SOURCE = 'https://raw.githubusercontent.com/markse123/FordWidget/" + 'a'.repeat(40) + "/FordWidget.js';")
+    .replace(/^const INSTALL_SOURCE = '[^']+';$/m, "const INSTALL_SOURCE = 'https://raw.githubusercontent.com/markse123/FordWidget/" + 'a'.repeat(40) + '/' + (options.installerFilename || WIDGET_URL_FILE) + "';")
     .replace(/^const INSTALL_SHA256 = '[^']+';$/m, "const INSTALL_SHA256 = '" + (options.installerHash || 'b'.repeat(64)) + "';");
   const installerPath = path.join(dir, 'docs/installer.js');
   fs.writeFileSync(installerPath, installer); fs.chmodSync(installerPath, 0o644);
-  fs.writeFileSync(path.join(dir, 'docs/index.html'), '<p>Installing widget version <strong>0.1.8</strong>. <a href="https://github.com/markse123/FordWidget/blob/' + 'a'.repeat(40) + '/FordWidget.js">Review source</a></p>\n');
+  fs.writeFileSync(path.join(dir, 'docs/index.html'), '<p>Installing widget version <strong>0.1.8</strong>. <a href="https://github.com/markse123/FordWidget/blob/' + 'a'.repeat(40) + '/' + WIDGET_URL_FILE + '">Review source</a></p>\n');
   git(dir, 'init', '-q', '--initial-branch=main');
   git(dir, 'config', 'user.name', 'Release Fixture'); git(dir, 'config', 'user.email', 'release@example.test');
   git(dir, 'remote', 'add', 'origin', 'https://github.com/markse123/FordWidget.git');
@@ -50,13 +52,13 @@ function refuses(f, sha = f.sha, pattern = /Release preparation failed/) {
 const stripped = text => text.replace(/^const INSTALL_(VERSION|SOURCE|SHA256) = '[^']+';$/gm, 'const INSTALL_$1 = <release pin>;');
 
 test('release pin verifies exact committed widget and metadata then updates only three constants deterministically', t => {
-  const f = fixture(t), otherPaths = ['FordWidget.js', 'source/version.json', 'source/build-manifest.json', 'source/release.py'];
+  const f = fixture(t), otherPaths = [WIDGET_FILE, 'source/version.json', 'source/build-manifest.json', 'source/release.py'];
   const others = otherPaths.map(p => fs.readFileSync(path.join(f.dir, p)));
   const r = run(f); assert.equal(r.status, 0, r.stderr);
   const after = fs.readFileSync(f.installerPath, 'utf8');
   assert.equal(stripped(after), stripped(f.installer));
   assert.match(after, /const INSTALL_VERSION = '0\.1\.9';/);
-  assert.ok(after.includes('/' + f.sha + '/FordWidget.js'));
+  assert.ok(after.includes('/' + f.sha + '/' + WIDGET_URL_FILE));
   assert.ok(after.includes("const INSTALL_SHA256 = '" + hash(f.widget) + "';"));
   assert.equal(fs.statSync(f.installerPath).mode & 0o777, 0o644);
   for (const [i, p] of otherPaths.entries()) assert.deepEqual(fs.readFileSync(path.join(f.dir, p)), others[i], p);
@@ -66,7 +68,7 @@ test('release pin verifies exact committed widget and metadata then updates only
 
 test('release pin rejects short, malformed, missing and non-commit object IDs without mutation', t => {
   const f = fixture(t);
-  for (const sha of ['main', f.sha.slice(0, 12), f.sha.toUpperCase(), 'f'.repeat(40), 'a'.repeat(64), f.sha + '\n', git(f.dir, 'hash-object', 'FordWidget.js')])
+  for (const sha of ['main', f.sha.slice(0, 12), f.sha.toUpperCase(), 'f'.repeat(40), 'a'.repeat(64), f.sha + '\n', git(f.dir, 'hash-object', WIDGET_FILE)])
     refuses(f, sha);
 });
 
@@ -74,7 +76,7 @@ test('release pin requires current source, version authority and manifest bytes 
   for (const kind of ['widget', 'version-format', 'manifest-format']) {
     const f = fixture(t);
     if (kind === 'widget') {
-      const next = f.widget + '// Edited after review.\n'; fs.writeFileSync(path.join(f.dir, 'FordWidget.js'), next);
+      const next = f.widget + '// Edited after review.\n'; fs.writeFileSync(path.join(f.dir, WIDGET_FILE), next);
       const p = path.join(f.dir, 'source/build-manifest.json'), m = JSON.parse(fs.readFileSync(p));
       m.outputSHA256 = hash(next); fs.writeFileSync(p, JSON.stringify(m) + '\n');
     } else fs.appendFileSync(path.join(f.dir, kind === 'version-format' ? 'source/version.json' : 'source/build-manifest.json'), '\n');
@@ -100,7 +102,7 @@ test('release pin refuses downgrade and changed bytes under an already pinned ve
   fs.writeFileSync(path.join(f.dir, 'README.md'), 'Same widget bytes in a later public commit.\n');
   git(f.dir, 'add', '.'); git(f.dir, 'commit', '-qm', 'Synthetic unchanged widget commit');
   const next = git(f.dir, 'rev-parse', 'HEAD');
-  assert.equal(run(f, next).status, 0); assert.ok(fs.readFileSync(f.installerPath, 'utf8').includes('/' + next + '/FordWidget.js'));
+  assert.equal(run(f, next).status, 0); assert.ok(fs.readFileSync(f.installerPath, 'utf8').includes('/' + next + '/' + WIDGET_URL_FILE));
 });
 
 test('release pin refuses malformed or ambiguous existing installer constants and wrong repositories', t => {
@@ -120,8 +122,8 @@ test('release input symlinks are refused without writing through them', t => {
   refuses(f, f.sha, /regular files/); assert.deepEqual(fs.readFileSync(other), content);
 });
 
-function writeIndex(f, version = f.version, sha = f.sha) {
-  fs.writeFileSync(path.join(f.dir, 'docs/index.html'), '<p>Installing widget version <strong>' + version + '</strong>. <a href="https://github.com/markse123/FordWidget/blob/' + sha + '/FordWidget.js">Review source</a></p>\n');
+function writeIndex(f, version = f.version, sha = f.sha, filename = WIDGET_URL_FILE) {
+  fs.writeFileSync(path.join(f.dir, 'docs/index.html'), '<p>Installing widget version <strong>' + version + '</strong>. <a href="https://github.com/markse123/FordWidget/blob/' + sha + '/' + filename + '">Review source</a></p>\n');
 }
 function check(f, base) {
   return cp.spawnSync('python3', ['source/release.py', '--check', ...(base ? ['--base', base] : [])], {cwd: f.dir, encoding: 'utf8'});
@@ -130,7 +132,7 @@ function changeWidget(f, version, extra = '') {
   f.version = version;
   f.widget = f.widget.replace(/^FordWidget Pro Power [^\r\n]*$/m, 'FordWidget Pro Power ' + version)
     .replace(/^const FORDWIDGET_VERSION = '[^']+';$/m, "const FORDWIDGET_VERSION = '" + version + "';") + extra;
-  fs.writeFileSync(path.join(f.dir, 'FordWidget.js'), f.widget);
+  fs.writeFileSync(path.join(f.dir, WIDGET_FILE), f.widget);
   fs.writeFileSync(path.join(f.dir, 'source/version.json'), JSON.stringify({version}) + '\n');
   fs.writeFileSync(path.join(f.dir, 'source/build-manifest.json'), JSON.stringify({version, outputSHA256: hash(f.widget)}) + '\n');
   git(f.dir, 'add', '.'); git(f.dir, 'commit', '-qm', 'Synthetic next reviewed widget');
@@ -139,7 +141,7 @@ function changeWidget(f, version, extra = '') {
 
 test('read-only release check validates the pin, exact source commit and page without changing files', t => {
   const f = fixture(t); assert.equal(run(f).status, 0); writeIndex(f);
-  const files = ['FordWidget.js', 'source/version.json', 'source/build-manifest.json', 'docs/installer.js', 'docs/index.html'];
+  const files = [WIDGET_FILE, 'source/version.json', 'source/build-manifest.json', 'docs/installer.js', 'docs/index.html'];
   const before = files.map(p => fs.readFileSync(path.join(f.dir, p)));
   const r = check(f); assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /Verified installer, widget and page v0\.1\.9/);
   files.forEach((p, i) => assert.deepEqual(fs.readFileSync(path.join(f.dir, p)), before[i], p));
@@ -186,4 +188,72 @@ test('base check rejects malformed or inconsistent base version evidence rather 
   for (const candidate of ['main', base.slice(0, 12), invalid]) {
     const r = check(f, candidate); assert.equal(r.status, 1); assert.match(r.stderr, /base commit|base commit's/);
   }
+});
+
+test('legacy installer pins migrate to the canonical encoded filename without weakening version or hash rules', t => {
+  for (const installerVersion of ['0.1.8', '0.1.9']) {
+    const f = fixture(t, {installerVersion, installerFilename: 'FordWidget.js'});
+    if (installerVersion === f.version) fs.writeFileSync(f.installerPath, fs.readFileSync(f.installerPath, 'utf8')
+      .replace(/^const INSTALL_SHA256 = '[^']+';$/m, "const INSTALL_SHA256 = '" + hash(f.widget) + "';"));
+    const before = fs.readFileSync(f.installerPath, 'utf8');
+    assert.equal(check(f).status, 1, 'A legacy published path must fail the canonical release check');
+    assert.match(check(f).stderr, /canonical percent-encoded widget filename/);
+    const r = run(f); assert.equal(r.status, 0, r.stderr);
+    const after = fs.readFileSync(f.installerPath, 'utf8');
+    assert.equal(stripped(after), stripped(before));
+    assert.ok(after.includes('/' + f.sha + '/' + WIDGET_URL_FILE));
+    assert.ok(after.includes("const INSTALL_SHA256 = '" + hash(f.widget) + "';"));
+    writeIndex(f); assert.equal(check(f).status, 0);
+  }
+});
+
+test('filename-only migration from a legacy base keeps the version while changed bytes still require a bump', t => {
+  const f = fixture(t, {installerFilename: 'FordWidget.js'});
+  git(f.dir, 'mv', WIDGET_FILE, 'FordWidget.js'); git(f.dir, 'commit', '-qm', 'Synthetic legacy filename base');
+  const base = git(f.dir, 'rev-parse', 'HEAD');
+  git(f.dir, 'mv', 'FordWidget.js', WIDGET_FILE); git(f.dir, 'commit', '-qm', 'Synthetic filename-only migration');
+  f.sha = git(f.dir, 'rev-parse', 'HEAD');
+  const r = cp.spawnSync('python3', ['source/release.py', '--commit', f.sha, '--base', base], {cwd: f.dir, encoding: 'utf8'});
+  assert.equal(r.status, 0, r.stderr); writeIndex(f); assert.equal(check(f, base).status, 0);
+  assert.equal(fs.readFileSync(path.join(f.dir, WIDGET_FILE), 'utf8'), f.widget);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.dir, 'source/version.json'))).version, '0.1.9');
+  changeWidget(f, '0.1.9', '// Actual behavior changed after the rename.\n');
+  const rejected = cp.spawnSync('python3', ['source/release.py', '--commit', f.sha, '--base', base], {cwd: f.dir, encoding: 'utf8'});
+  assert.equal(rejected.status, 1); assert.match(rejected.stderr, /strictly newer version/);
+});
+
+test('historical legacy bases without version.json work and canonical base files take precedence when both names exist', t => {
+  const f = fixture(t, {version: '0.1.8', installerVersion: '0.1.7'});
+  git(f.dir, 'mv', WIDGET_FILE, 'FordWidget.js'); git(f.dir, 'rm', 'source/version.json');
+  git(f.dir, 'commit', '-qm', 'Synthetic oldest legacy filename base'); const base = git(f.dir, 'rev-parse', 'HEAD');
+  git(f.dir, 'mv', 'FordWidget.js', WIDGET_FILE); changeWidget(f, '0.1.9');
+  assert.equal(run(f).status, 0); writeIndex(f); assert.equal(check(f, base).status, 0);
+  const both = fixture(t);
+  fs.writeFileSync(path.join(both.dir, 'FordWidget.js'), both.widget.replaceAll('0.1.9', '0.1.8'));
+  git(both.dir, 'add', '.'); git(both.dir, 'commit', '-qm', 'Synthetic two-name base'); const bothBase = git(both.dir, 'rev-parse', 'HEAD');
+  changeWidget(both, '0.1.9', '// Changed canonical artifact.\n');
+  const r = cp.spawnSync('python3', ['source/release.py', '--commit', both.sha, '--base', bothBase], {cwd: both.dir, encoding: 'utf8'});
+  assert.equal(r.status, 1); assert.match(r.stderr, /strictly newer version/);
+});
+
+test('release sources and page links require the exact canonical encoding, with legacy input allowed only for migration', t => {
+  const filenames = ['FordWidget Pro Power.js', 'FordWidget+Pro+Power.js', 'FordWidget%2520Pro%2520Power.js',
+    'FordWidget%20Pro Power.js', 'FordWidget%20Pro%20Power.mjs', 'FordWidget%20Pro%20Power.js?raw=1'];
+  for (const filename of filenames) refuses(fixture(t, {installerFilename: filename}));
+  const f = fixture(t); assert.equal(run(f).status, 0);
+  for (const filename of ['FordWidget.js', ...filenames]) {
+    writeIndex(f, f.version, f.sha, filename);
+    const r = check(f); assert.equal(r.status, 1); assert.match(r.stderr, /page version\/source/);
+  }
+  writeIndex(f);
+  fs.appendFileSync(path.join(f.dir, 'docs/index.html'), '<a href="https://github.com/markse123/FordWidget/blob/' + f.sha + '/FordWidget.js">Old path</a>');
+  assert.equal(check(f).status, 1, 'A mixed canonical/legacy source-link set cannot pass');
+});
+
+test('the new release commit must contain the canonical filename rather than falling back to another script', t => {
+  const f = fixture(t);
+  git(f.dir, 'mv', WIDGET_FILE, 'FordWidget.js'); git(f.dir, 'commit', '-qm', 'Synthetic legacy-only selected commit');
+  const legacy = git(f.dir, 'rev-parse', 'HEAD');
+  fs.writeFileSync(path.join(f.dir, WIDGET_FILE), f.widget); fs.unlinkSync(path.join(f.dir, 'FordWidget.js'));
+  refuses(f, legacy, /Cannot read the requested/);
 });

@@ -8,7 +8,7 @@ You need an iPhone with Scriptable, a FordPass account authorized for the vehicl
 
 For the guided installer, open [the install page](https://markse123.github.io/FordWidget/) on your iPhone. Copy the installer into a separate Scriptable script named **Install FordWidget Pro Power** and run it. Choose your script storage and **New installation** or **Update an existing script**. For an update, enter the exact name of your existing fork script, including an older or custom name. The installer checks the pinned download's SHA-256, refuses downgrades or ambiguous version information, asks before replacing an existing fork script and saves a backup of its code. It leaves sign-in, settings and vehicle data in place. Run the installed widget separately afterward. You can also install manually:
 
-1. Open [FordWidget.js](https://raw.githubusercontent.com/markse123/FordWidget/main/FordWidget.js) and copy all its contents.
+1. Open [FordWidget Pro Power.js](https://raw.githubusercontent.com/markse123/FordWidget/main/FordWidget%20Pro%20Power.js) and copy all its contents.
 2. In Scriptable, create a script, paste the code and name it **FordWidget Pro Power**.
 3. Run it inside Scriptable. Enter your VIN and a vehicle name locally. The offline self-test and **Vehicle features / compatibility** check follow setup. Review the suggested features or finish and rerun the check after connecting FordPass; missing readings are unverified.
 4. Choose **Connect FordPass**. Complete Ford sign-in and any verification. The optional password field can stay blank so you enter the password directly on Ford's page. Close the sign-in window when it finishes.
@@ -134,7 +134,7 @@ iOS decides when Home Screen widgets redraw. The script requests an update after
 
 ## Update an existing installation
 
-Replace the contents of your existing script and **keep its current Scriptable name**. Run it and check the version in the main-menu title. The Keychain namespace and cache folder remain unchanged, preserving sign-in, settings and saved data.
+Download **FordWidget Pro Power.js**, replace the contents of your existing script and **keep its current Scriptable name**. Existing scripts do not need to be renamed to match the downloadable file. Run it and check the version in the main-menu title. The Keychain namespace and cache folder remain unchanged, preserving sign-in, settings and saved data.
 
 The public name is now **FordWidget Pro Power**. Renaming an existing script is optional. If you rename it, edit every Home Screen and Lock Screen widget to select the new script name, then preview the desired size in **Customize widgets**. Allow iOS to redraw the Home Screen copy.
 

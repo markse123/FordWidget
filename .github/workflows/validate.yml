@@ -19,8 +19,8 @@ jobs:
       - name: Verify deterministic build
         run: |
           python3 source/build.py
-          git diff --exit-code -- FordWidget.js source/build-manifest.json
-          node --input-type=module --check < FordWidget.js
+          git diff --exit-code -- "FordWidget Pro Power.js" source/build-manifest.json
+          node --input-type=module --check < "FordWidget Pro Power.js"
       - name: Run offline regressions
         run: |
           node --test tests/*.test.cjs source/widget.test.cjs

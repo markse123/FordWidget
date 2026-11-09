@@ -1,6 +1,6 @@
 # Development
 
-`FordWidget.js` is the generated, installable Scriptable script for **FordWidget Pro Power v0.1.9**. The modular inputs and offline tests are in `source/`. Users install the single script; they do not need the build tools.
+`FordWidget Pro Power.js` is the generated, installable Scriptable script for **FordWidget Pro Power v0.1.9**. The modular inputs and offline tests are in `source/`. Users install the single script; they do not need the build tools.
 
 ## Build and check
 
@@ -15,7 +15,7 @@ node source/core.test.cjs
 node source/ui.test.cjs
 node source/parser.test.cjs
 node --test tests/*.test.cjs
-node --input-type=module --check < FordWidget.js
+node --input-type=module --check < "FordWidget Pro Power.js"
 ```
 
 The build and tests make no Ford requests. Test requests, credentials, identifiers, positions and vehicle data are synthetic fixtures. The test runner mocks Scriptable's network, storage and UI APIs. Do not replace fixtures with actual vehicle captures or credentials.
@@ -26,11 +26,11 @@ The app version is defined in `source/version.json` and must be canonical `major
 
 `source/version.json` is the single app-version source. Rebuild rather than editing the generated widget header, runtime version or manifest independently. Release validation requires one unambiguous version header, a matching runtime version, and agreement between the version file, generated widget and build manifest. The installer refuses downgrades and rejects malformed or conflicting installed version headers before replacement.
 
-Once a widget version has been published, changed widget bytes require a version bump. The release check compares the candidate with the selected base and the existing installer pin so a new payload cannot silently reuse a published version. Documentation or installer-metadata-only changes can retain the app version when the widget bytes are unchanged.
+Once a widget version has been published, changed widget bytes require a version bump. The release check compares the candidate with the selected base and the existing installer pin so a new payload cannot silently reuse a published version. Documentation, installer-metadata or distribution-filename changes can retain the app version when the widget bytes are unchanged. The canonical distributable is `FordWidget Pro Power.js`; retain the original upstream filename in pristine source/provenance references.
 
 Prepare a release in two commits:
 
-1. Set the new canonical version in `source/version.json`, rebuild, run the offline tests and review the generated `FordWidget.js`. Commit the reviewed widget, version metadata and matching manifest. Record that full 40-character code-commit SHA.
+1. Set the new canonical version in `source/version.json`, rebuild, run the offline tests and review the generated `FordWidget Pro Power.js`. Commit the reviewed widget, version metadata and matching manifest. Record that full 40-character code-commit SHA.
 2. From the same checkout, run `python3 source/release.py --commit FULL_CODE_COMMIT_SHA`. The helper verifies the committed widget/version/manifest bytes and prepares the installer's immutable source URL, version and SHA-256 together. Update the page's installed-version/source link to the same pin, review the result, and commit the installer/page metadata separately.
 
 Validate the final release without modifying files:

@@ -11,7 +11,7 @@ const root = path.resolve(__dirname, '..');
 const pinnedSource = fs.readFileSync(path.join(__dirname, 'FordWidget.upstream.js'), 'utf8');
 const baselineSource = pinnedSource;
 const appVersion = JSON.parse(fs.readFileSync(path.join(__dirname, "version.json"), "utf8")).version;
-const widgetPath = process.argv[2] || process.env.FORDWIDGET_SCRIPT || path.join(root, 'FordWidget.js');
+const widgetPath = process.argv[2] || process.env.FORDWIDGET_SCRIPT || path.join(root, 'FordWidget Pro Power.js');
 const widgetSource = fs.readFileSync(widgetPath, 'utf8');
 const entryMarker = '// __FORDWIDGET_ENTRY__';
 assert.ok(widgetSource.includes(entryMarker), 'The widget must expose its offline entry boundary');

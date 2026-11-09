@@ -79,7 +79,7 @@ async function installFordWidget() {
   if (!config.runsInApp || config.runsInWidget) {
     await installerMessage('Open Scriptable', 'Run this installer inside the Scriptable app.'); return;
   }
-  if (!installerVersionParts(INSTALL_VERSION) || !/^https:\/\/raw\.githubusercontent\.com\/markse123\/FordWidget\/[a-f0-9]{40}\/FordWidget\.js$/.test(INSTALL_SOURCE) || !/^[a-f0-9]{64}$/.test(INSTALL_SHA256))
+  if (!installerVersionParts(INSTALL_VERSION) || !/^https:\/\/raw\.githubusercontent\.com\/markse123\/FordWidget\/[a-f0-9]{40}\/FordWidget%20Pro%20Power\.js$/.test(INSTALL_SOURCE) || !/^[a-f0-9]{64}$/.test(INSTALL_SHA256))
     throw new InstallerError('This installer has invalid release information. Copy the reviewed installer and try again.');
   const storage = new Alert(); storage.title = 'Install FordWidget Pro Power';
   storage.message = 'Choose where you keep your Scriptable scripts.';
