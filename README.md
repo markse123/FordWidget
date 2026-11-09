@@ -2,7 +2,7 @@
 
 Home Screen and Lock Screen widgets for iPhone, built with [Scriptable](https://scriptable.app). This fork retains the original FordWidget features and adds optional **Pro Power Onboard monitoring**.
 
-**v0.1.8.** [Install the script](FordWidget.js) · [Setup and usage](docs/USAGE.md) · [Personal fork](https://github.com/markse123/FordWidget)
+**v0.1.8.** [Install on your iPhone](https://markse123.github.io/FordWidget/) · [Script source](FordWidget.js) · [Setup and usage](docs/USAGE.md)
 
 ## What it includes
 
