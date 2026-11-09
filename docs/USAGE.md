@@ -6,6 +6,8 @@ These instructions describe **v0.1.8** of [markse123/FordWidget](https://github.
 
 You need an iPhone with Scriptable, a FordPass account authorized for the vehicle, and an activated vehicle modem. Feature availability depends on the vehicle and account. US sign-in has been tested; Canada has not.
 
+For the guided installer, open [the install page](https://markse123.github.io/FordWidget/) on your iPhone. Copy the installer into a separate Scriptable script named **Install FordWidget Pro Power** and run it. Choose your script storage and **New installation** or **Update an existing script**. For an update, enter the exact name of your existing fork script, including an older or custom name. The installer checks the pinned download's SHA-256, asks before replacing an existing fork script and saves a backup of its code. It leaves sign-in, settings and vehicle data in place. Run the installed widget separately afterward. You can also install manually:
+
 1. Open [FordWidget.js](https://raw.githubusercontent.com/markse123/FordWidget/main/FordWidget.js) and copy all its contents.
 2. In Scriptable, create a script, paste the code and name it **FordWidget Pro Power**.
 3. Run it inside Scriptable. Enter your VIN and a vehicle name locally.

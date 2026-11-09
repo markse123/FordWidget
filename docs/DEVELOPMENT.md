@@ -39,3 +39,9 @@ The Keychain prefix `FordWidget.ProPowerPreview.v1.` and local folder `FordWidge
 Useful redacted reports remain available through the app's **Troubleshooting** menu. Pro Power reports use cached data. The vehicle report offers one passive cloud read and does not save candidate telemetry or send a vehicle command. Both reports still contain vehicle states and times, so users should review them before sharing.
 
 This repository excludes research tools, app packages, captures, screenshots, personal configurations, cached vehicle data and generated test logs. Add only deliberately reviewed source, tests and documentation. The original license and project attribution must remain intact.
+
+## Install page
+
+The static site lives in `docs/index.html`, `styles.css`, `site.js` and `icon.svg`. GitHub Pages publishes `main` → `/docs`; `.nojekyll` keeps the assets as plain static files. There are no external fonts, analytics or site account forms. Serve `docs/` locally to check desktop/mobile layouts and the copy/manual-copy flow.
+
+`docs/installer.js` is a separate Scriptable script. It downloads an immutable reviewed widget commit, validates its SHA-256, preserves the chosen script name, asks before replacement and backs up existing code. It never executes the widget or reads its Keychain/cache. When releasing a new widget, update its version, commit URL and SHA-256 together in the installer and update the page's version/source link. Run `node --test tests/installer.test.cjs tests/site.test.cjs`, check the existing widget suites, then verify installation/update in native Scriptable when available. The installer's pin is intentionally independent of an unreviewed moving branch.
