@@ -72,7 +72,7 @@ test('fresh root response times cannot substitute for missing or invalid securit
     if (missing === 'hood' || missing === 'all') delete responseMetrics.hoodStatus.updateTime;
     const { h, result } = await evening({ responseMetrics, responseTime: iso(TIME) });
     const field = missing === 'lock' ? 'lock' : 'doors';
-    assert.equal(result.fields[field].at, TIME, 'The existing root-time display fallback remains available');
+    assert.equal(result.fields[field].at, null, 'A missing component time is unknown; the response time never stands in for it');
     assert.equal(result.fields[field].measurementAt, null, 'Security measurement provenance must stay unknown');
     assert.equal(result.night.securityFresh, false);
     assert.match(h.state.notifications[0].body, /could not be confirmed/);
@@ -87,7 +87,7 @@ test('fresh root response times cannot substitute for missing or invalid securit
     ];
     const { h, result } = await evening({ responseMetrics, responseTime: iso(TIME) });
     const field = component === 'hood' ? 'doors' : 'lock';
-    assert.equal(result.fields[field].at, TIME - 1000, 'Displayed aggregate timestamps keep their existing behavior');
+    assert.notEqual(result.fields[field].at, TIME + 1000, 'A future component time is never displayed as a measurement');
     assert.equal(result.fields[field].measurementAt, null, 'The earliest aggregate time must not hide an untrusted future component');
     assert.equal(result.night.securityFresh, false); assert.match(h.state.notifications[0].body, /could not be confirmed/);
   }
@@ -108,7 +108,7 @@ test('explicit Locked and Closed measurements within five minutes permit the opt
 test('a hood reading alone is not fresh evidence that the doors are closed', async () => {
   const responseMetrics = metrics(); delete responseMetrics.doorStatus;
   const { h, result } = await evening({ responseMetrics });
-  assert.equal(result.fields.doors.value, 'Closed'); assert.equal(result.fields.doors.measurementAt, null);
+  assert.equal(result.fields.doors.value, 'Unknown'); assert.equal(result.fields.doors.measurementAt, null);
   assert.equal(result.night.securityFresh, false); assert.match(h.state.notifications[0].body, /could not be confirmed/);
 });
 
