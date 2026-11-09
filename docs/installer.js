@@ -42,9 +42,31 @@ function installerSHA256(input) {
   }
   return h.map(word => (word >>> 0).toString(16).padStart(8, '0')).join('');
 }
+function installerVersionParts(value) {
+  if (typeof value !== 'string' || value.length > 64) return null;
+  const match = value.match(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
+  return match ? match.slice(1) : null;
+}
 function installerVersion(code) {
-  const match = typeof code === 'string' && code.match(/\/\*\s*\nFordWidget Pro Power (?:Preview )?(\d+\.\d+\.\d+)/);
-  return match ? match[1] : null;
+  if (typeof code !== 'string') return null;
+  const start = code.indexOf('/*');
+  if (start < 0 || !/^(?:[ \t]*(?:\/\/[^\r\n]*)?\r?\n)*[ \t]*$/.test(code.slice(0, start))) return null;
+  const match = code.slice(start).match(/^\/\*[ \t]*\r?\nFordWidget Pro Power (?:Preview )?([^\r\n]*)\r?\n/);
+  const labels = code.match(/^FordWidget Pro Power [^\r\n]*\r?$/gm) || [];
+  if (!match || labels.length !== 1 || !installerVersionParts(match[1])) return null;
+  const runtimeLines = code.match(/^const FORDWIDGET_VERSION[^\r\n]*\r?$/gm) || [];
+  if (runtimeLines.length && (runtimeLines.length !== 1 || runtimeLines[0].replace(/\r$/, '') !== "const FORDWIDGET_VERSION = '" + match[1] + "';")) return null;
+  return match[1];
+}
+function installerCompareVersions(current, next) {
+  const a = installerVersionParts(current), b = installerVersionParts(next);
+  if (!a || !b) throw new InstallerError('The script or installer version could not be verified. Copy a reviewed installer and try again.');
+  for (let i = 0; i < 3; i++) {
+    // Compare decimal strings so large version components never lose precision.
+    if (a[i].length !== b[i].length) return a[i].length > b[i].length ? 1 : -1;
+    if (a[i] !== b[i]) return a[i] > b[i] ? 1 : -1;
+  }
+  return 0;
 }
 function installerFork(code) {
   return !!installerVersion(code) &&
@@ -57,6 +79,8 @@ async function installFordWidget() {
   if (!config.runsInApp || config.runsInWidget) {
     await installerMessage('Open Scriptable', 'Run this installer inside the Scriptable app.'); return;
   }
+  if (!installerVersionParts(INSTALL_VERSION) || !/^https:\/\/raw\.githubusercontent\.com\/markse123\/FordWidget\/[a-f0-9]{40}\/FordWidget\.js$/.test(INSTALL_SOURCE) || !/^[a-f0-9]{64}$/.test(INSTALL_SHA256))
+    throw new InstallerError('This installer has invalid release information. Copy the reviewed installer and try again.');
   const storage = new Alert(); storage.title = 'Install FordWidget Pro Power';
   storage.message = 'Choose where you keep your Scriptable scripts.';
   storage.addAction('iCloud Drive'); storage.addAction('On My iPhone'); storage.addCancelAction('Cancel');
@@ -82,11 +106,8 @@ async function installFordWidget() {
     await fm.downloadFileFromiCloud(path);
     previous = fm.readString(path);
     if (!installerFork(previous)) throw new InstallerError('That name belongs to another script. Choose your existing Pro Power script or a new name.');
-    const currentVersion = installerVersion(previous).split('.').map(Number), nextVersion = INSTALL_VERSION.split('.').map(Number);
-    for (let i = 0; i < 3; i++) {
-      if (currentVersion[i] > nextVersion[i]) throw new InstallerError('Your script is newer than this installer. Get the latest installer before updating.');
-      if (currentVersion[i] < nextVersion[i]) break;
-    }
+    if (installerCompareVersions(installerVersion(previous), INSTALL_VERSION) > 0)
+      throw new InstallerError('Your script is newer than this installer. Get the latest installer before updating.');
     const replace = new Alert(); replace.title = 'Replace ' + name + '?';
     replace.message = 'Install v' + INSTALL_VERSION + ' under this same name. Your current code will be backed up first. Sign-in, settings and vehicle data are kept.';
     replace.addDestructiveAction('Back up and replace'); replace.addCancelAction('Cancel');
@@ -99,7 +120,7 @@ async function installFordWidget() {
   const bytes = data.getBytes();
   if (bytes.length > 1000000 || installerSHA256(bytes) !== INSTALL_SHA256) throw new InstallerError('The download did not match the reviewed version. Your script was not replaced.');
   const code = data.toRawString();
-  if (!installerFork(code)) throw new InstallerError('The download was not a valid Pro Power script.');
+  if (!installerFork(code) || installerVersion(code) !== INSTALL_VERSION) throw new InstallerError('The downloaded script version did not match this installer. Your script was not replaced.');
   // Recheck after the network wait so an intervening edit is not overwritten.
   if (fm.fileExists(path)) {
     await fm.downloadFileFromiCloud(path);

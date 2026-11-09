@@ -1,8 +1,8 @@
 // Variables used by Scriptable.
 // icon-color: blue; icon-glyph: truck;
 /*
-FordWidget Pro Power 0.1.8
-Derived from rushilpunu/FordWidget, pinned commit 1b129eb6155fa7c0a1d14592be6983366943d31b.
+FordWidget Pro Power 0.1.9
+Derived from rushilpunu/FordWidget, pinned commit b7f7e2866c014445b2bec831c237925d3ca61b5f.
 All original layouts, controls, telemetry, photos and notifications remain available.
 New optional parameters: ppoa ppob ppototal ppocapacity (alias: ppo).
 Selected Pro Power fields join the original Home Screen layout when original
@@ -89,7 +89,7 @@ SOFTWARE.
  * - After FordPass is connected, "Fetch telemetry" also downloads the photo Ford
  *   shows for your VIN in the FordPass app (refreshed every 30 days) and caches
  *   it next to the telemetry cache. Order: FordPass garage profile image, then
- *   Ford's image service. Menu > Truck photo picks a view angle (1-5), a photo
+ *   Ford's image service. Menu > Vehicle photo picks a view angle (1-5), a photo
  *   from your library (worst case; a cut-out PNG with no background looks best),
  *   or the plain icon. URL: scriptable:///run?scriptName=FordWidget&action=photo
  *
@@ -104,19 +104,19 @@ SOFTWARE.
  *   rounded to ~1 km, no account).
  * - Scriptable's Keychain is shared by ALL scripts in the app. Any other script
  *   you install can read FordWidget's tokens, and those tokens can unlock and
- *   start your truck. Don't install Scriptable scripts you haven't read. To
+ *   start your vehicle. Don't install Scriptable scripts you haven't read. To
  *   revoke access, use Menu > Sign out of Ford and change your Ford password.
  * - Anything (a web page, a QR code) can open a scriptable:// link to this script.
  *   That's why every command shows a confirmation alert first. Only tap "Send
  *   command" if you started it.
  * - When asking for help, don't post your VIN, location or screenshots of
  *   View details. Errors never include tokens or passwords.
- * - Remote start: only when the truck is parked outdoors, never in a garage.
+ * - Remote start: only when the vehicle is parked outdoors, never in a garage.
  *
  * BEHAVIOR / LIMITS
  * - Widgets draw from the cache and never send commands. One exception: the
  *   EVENING CHECK. The first widget refresh after the chosen hour (default 9 PM)
- *   reads the truck's last cloud state once (read-only, does not wake the modem),
+ *   reads the vehicle's last cloud state once (read-only, does not wake the modem),
  *   at most twice per evening, 6 s timeouts, and notifies you about problems.
  *   iOS decides exactly when widgets refresh, so the time is approximate.
  * - Remote start shows a live countdown (iOS ticks it). Right after Start it is an
@@ -182,7 +182,7 @@ const SETTINGS = Object.freeze({
   lowTire: 30,
   homeRadius: 150,
   timeout: 12,
-  // Truck photo sources (both need the FordPass CAT token). Checked 2026-11-07:
+  // Vehicle photo sources (both need the FordPass CAT token). Checked 2026-11-07:
   // the old public www.digitalservices.ford.com image host no longer resolves.
   garage: 'https://api.vehicle.ford.com/api/fpcpl-user-garage-service/v1/user/garage',
   imageService: 'https://api.mps.ford.com/api/imageservice/data',
@@ -344,6 +344,27 @@ class LocalStore {
     }
     return null;
   }
+// Move the actual lock before deciding which record may be removed. FileManager
+// has no compare-and-delete operation; a mismatched owner must be restored with
+// a no-clobber copy or retained at the displaced path for safe recovery.
+  retireLease(expected) {
+    const displaced = this.lockPath + '.retired.' + uid();
+    let moved = false;
+    const restore = () => {
+      if (!moved || !this.fm.fileExists(displaced)) return;
+      try {
+        this.fm.copy(displaced, this.lockPath);
+        if (this.fm.readString(this.lockPath) === this.fm.readString(displaced)) this.fm.remove(displaced);
+      } catch (_) { /* Keep the displaced record; never overwrite a new owner. */ }
+    };
+    try {
+      if (this.fm.fileExists(displaced)) return false;
+      this.fm.move(this.lockPath, displaced); moved = true;
+      if (JSON.stringify(this.readFile(displaced)) !== JSON.stringify(expected)) { restore(); return false; }
+      this.fm.remove(displaced);
+      return true;
+    } catch (_) { restore(); return false; }
+  }
   async acquire() {
     requireApp();
     if (!this.fm.fileExists(this.dir)) this.fm.createDirectory(this.dir, true);
@@ -356,13 +377,14 @@ class LocalStore {
         a.addDestructiveAction('Take over'); a.addCancelAction('Cancel');
         if (await a.presentAlert() < 0) throw new Error('Canceled. Another run still owns the app session.');
       }
-      this.fm.remove(this.lockPath);
+      if (!this.retireLease(old)) throw new Error('Another run owns the app session. Try again later.');
     }
     const owner = uid(), temp = this.lockPath + '.' + owner;
     this.fm.writeString(temp, JSON.stringify({ owner, started: now(), until: now() + SETTINGS.lease }));
-    // Native move refuses an existing destination: concurrent app runs fail closed.
-    try { this.fm.move(temp, this.lockPath); this.owner = owner; this.assertLease(); }
-    catch (_) { if (this.fm.fileExists(temp)) this.fm.remove(temp); throw new Error('Another run owns the app session. Try again later.'); }
+    // Native copy refuses an existing destination: concurrent app runs fail closed.
+    try { this.fm.copy(temp, this.lockPath); this.owner = owner; this.assertLease(); }
+    catch (_) { this.owner = null; throw new Error('Another run owns the app session. Try again later.'); }
+    finally { try { if (this.fm.fileExists(temp)) this.fm.remove(temp); } catch (_) {} }
   }
   // Evening check from the widget: never waits, never takes an app run's lock.
   acquireBackground() {
@@ -370,26 +392,26 @@ class LocalStore {
     const old = this.readFile(this.lockPath);
     if (this.fm.fileExists(this.lockPath)) {
       if (old && old.until > now()) return false;
-      this.fm.remove(this.lockPath);
+      if (!this.retireLease(old)) return false;
     }
     const owner = uid(), temp = this.lockPath + '.' + owner;
     this.fm.writeString(temp, JSON.stringify({ owner, started: now(), until: now() + 90000, background: true }));
-    try { this.fm.move(temp, this.lockPath); }
-    catch (_) { if (this.fm.fileExists(temp)) this.fm.remove(temp); return false; }
-    this.owner = owner; this.background = true;
-    return true;
+    try {
+      this.fm.copy(temp, this.lockPath); this.owner = owner; this.background = true; this.assertLease();
+      return true;
+    } catch (_) { this.owner = null; this.background = false; return false; }
+    finally { try { if (this.fm.fileExists(temp)) this.fm.remove(temp); } catch (_) {} }
   }
   assertLease() {
     if (!this.background) requireApp();
     const l = this.readFile(this.lockPath);
     if (!this.owner || !l || l.owner !== this.owner || l.until <= now()) throw new Error('App session expired. Run the script again.');
-    // Sliding lease: an active run keeps ownership; a killed run frees it after `lease`.
-    this.fm.writeString(this.lockPath, JSON.stringify({ owner: this.owner, started: l.started,
-      until: now() + (this.background ? 90000 : SETTINGS.lease), background: !!this.background }));
+    // Ownership is immutable until release/takeover/expiry. A stale run must
+    // never rewrite this shared file and restore itself over a newer owner.
   }
   release() {
     const l = this.readFile(this.lockPath);
-    if (this.owner && l && l.owner === this.owner) this.fm.remove(this.lockPath);
+    if (this.owner && l && l.owner === this.owner) this.retireLease(l);
     this.owner = null; this.background = false;
   }
   imagePath(vin, custom) { return this.fm.joinPath(this.dir, `vehicle_${vin}${custom ? '_custom' : ''}.png`); }
@@ -698,6 +720,8 @@ function componentReading(old, incoming, kind) {
     if (!unsafe(old) && unsafe(incoming)) return incoming;
   }
   const a = old.at || 0, b = incoming.at || 0;
+  // An undated unsafe reading cannot be proven older, so it may not lose to a dated safe one.
+  if (!b && unsafe(incoming) && !unsafe(old)) return incoming;
   if (b < a) return old;
   if (kind === 'doors' && incoming.value === 'UNKNOWN' && (unsafe(old) || old.unresolvedUnsafe))
     incoming = Object.assign({}, incoming, { unresolvedUnsafe: true });
@@ -767,7 +791,7 @@ function componentResult(kind, readings) {
   const oldest = list => list.length && list.every(item => item.at) ? list.reduce((chosen, item) => !chosen || item.at < chosen.at ? item : chosen, null) : null;
   const individual = active.filter(item => item.id !== 'ALL_DOORS'), all = kind === 'lock' && active.find(item => item.id === 'ALL_DOORS');
   if (all) {
-    const newer = individual.filter(item => !all.at || item.at && item.at >= all.at);
+    const newer = individual.filter(item => !all.at || !item.at || item.at >= all.at);
     const unlocked = newer.filter(item => item.value === 'UNLOCKED');
     if (unlocked.length) return result('Unlocked', newest(unlocked));
     const unknown = newer.filter(item => item.value === 'UNKNOWN');
@@ -780,7 +804,7 @@ function componentResult(kind, readings) {
   const allDoors = kind === 'doors' && active.find(item => item.id === 'ALL_DOORS');
   if (allDoors) {
     const hood = active.find(item => item.id === 'HOOD');
-    const newer = active.filter(item => item.id !== 'ALL_DOORS' && (item.id === 'HOOD' || !allDoors.at || item.at && item.at >= allDoors.at));
+    const newer = active.filter(item => item.id !== 'ALL_DOORS' && (item.id === 'HOOD' || !allDoors.at || !item.at || item.at >= allDoors.at));
     const unsafe = newer.filter(item => ['OPEN', 'AJAR'].includes(item.value));
     if (['OPEN', 'AJAR'].includes(allDoors.value)) unsafe.push(allDoors);
     if (unsafe.length) return result('Ajar', newest(unsafe));
@@ -929,20 +953,27 @@ function nightSettings(prefs) {
   return { enabled: n.enabled !== false, hour: Number.isInteger(n.hour) ? n.hour : 21, notifyOk: !!n.notifyOk };
 }
 // What the evening check reports. Only readings Ford actually sent are judged.
-function nightProblems(f) {
+function alertSettings(prefs) {
+  const a = (prefs && prefs.alerts) || {};
+  const valid = (v, fallback, max) => Number.isFinite(v) && v >= 0 && v <= max ? v : fallback;
+  return { enabled: Object.assign({ lock: true, doors: true, tires: true, fuel: true, oil: true, battery: true, engine: true }, a.enabled || {}),
+    tire: valid(a.tire, SETTINGS.lowTire, 100), fuel: valid(a.fuel, 15, 100), oil: valid(a.oil, 10, 100), battery: valid(a.battery, 50, 100), attention: a.attention === true };
+}
+function nightProblems(f, prefs) {
+  const options = alertSettings(prefs), enabled = options.enabled;
   const v = k => f[k] && f[k].value !== null && f[k].value !== undefined ? f[k].value : null;
   const out = [];
-  if (v('lock') === 'Unlocked') out.push('Unlocked');
-  if (v('doors') === 'Ajar') out.push('Door, hood or tailgate open');
-  const low = ['fl', 'fr', 'rl', 'rr'].filter(k => finite(v(k)) !== null && v(k) < SETTINGS.lowTire);
-  if (low.length) out.push('Low tire ' + low.map(k => `${k.toUpperCase()} ${Math.round(v(k))} psi`).join(', '));
-  if (finite(v('fuel')) !== null && v('fuel') < 15) out.push(`Fuel ${Math.round(v('fuel'))}%`);
-  if (finite(v('oil')) !== null && v('oil') <= 10) out.push(`Oil life ${Math.round(v('oil'))}%`);
+  if (enabled.lock && v('lock') === 'Unlocked') out.push('Unlocked');
+  if (enabled.doors && v('doors') === 'Ajar') out.push('Door, hood or tailgate open');
+  const low = ['fl', 'fr', 'rl', 'rr'].filter(k => finite(v(k)) !== null && v(k) < options.tire);
+  if (enabled.tires && low.length) out.push('Low tire ' + low.map(k => `${k.toUpperCase()} ${Math.round(v(k))} psi`).join(', '));
+  if (enabled.fuel && finite(v('fuel')) !== null && v('fuel') < options.fuel) out.push(`Fuel ${Math.round(v('fuel'))}%`);
+  if (enabled.oil && finite(v('oil')) !== null && v('oil') <= options.oil) out.push(`Oil life ${Math.round(v('oil'))}%`);
   const health = v('batteryHealth');
-  if (finite(v('battery')) !== null && v('battery') < 50) out.push(`12V battery ${Math.round(v('battery'))}%`);
-  else if (typeof health === 'string' && /LOW|WEAK|BAD|CRITICAL|REPLACE/i.test(health)) out.push('12V battery ' + health.toLowerCase().replace(/_/g, ' '));
+  if (enabled.battery && finite(v('battery')) !== null && v('battery') < options.battery) out.push(`12V battery ${Math.round(v('battery'))}%`);
+  else if (enabled.battery && typeof health === 'string' && /LOW|WEAK|BAD|CRITICAL|REPLACE/i.test(health)) out.push('12V battery ' + health.toLowerCase().replace(/_/g, ' '));
   const rs = v('remoteStart');
-  if (rs && rs.until > now()) out.push('Engine running (remote start)');
+  if (enabled.engine && rs && rs.until > now()) out.push('Engine running (remote start)');
   return out;
 }
 // A fresh cloud response can contain only fuel or another unrelated metric.
@@ -1020,10 +1051,9 @@ class FordAPIClient {
     c.notice = errors.join('\n'); this.store.write(c);
     return { cache: c, note: errors.length ? 'Some sources failed; available telemetry was saved.\n' + c.notice : 'Cloud telemetry saved. This did not wake the modem.' };
   }
-  // Street name for the parked spot. Apple's geocoder, app runs only, only when the truck moved.
+  // Street name for the parked spot. Apple's geocoder, app runs only, only when the vehicle moved.
   async updatePlace() {
     this.store.assertLease();
-    if (!parkedLocationEnabled(this.prefs) || !parkedLocationEnabled()) return;
     const c = this.store.read(), p = c && c.fields && c.fields.position && c.fields.position.value;
     if (!p || (c.place && meters(c.place, p) < 50 && c.place.label)) return;
     let label = null;
@@ -1054,7 +1084,7 @@ class FordAPIClient {
     const meta = c.image;
     if (!force && meta && meta.angle === angle && meta.at > now() - SETTINGS.imageMaxAge &&
       this.store.fm.fileExists(this.store.imagePath(vin, false))) return null;
-    if (!secretGet('token.mobile')) throw new Error('Connect FordPass first. Ford only serves your truck’s photo to a signed-in account.');
+    if (!secretGet('token.mobile')) throw new Error('Connect FordPass first. Ford only serves your vehicle’s photo to a signed-in account.');
     const h = { 'auth-token': await this.auth.token('mobile'), 'Application-Id': SETTINGS.applicationId };
     const garage = async () => {
       const g = await this.auth.request('image.garage', SETTINGS.garage, 'GET', null,
@@ -1110,7 +1140,7 @@ class FordAPIClient {
     if (command === 'start' && c.fields.doors && (c.fields.doors.value === 'Ajar' ||
         c.fields.doors.componentStatus && (c.fields.doors.componentStatus.legacy && c.fields.doors.componentStatus.legacy.value === 'Ajar' ||
           c.fields.doors.value === 'Unknown' && c.fields.doors.componentStatus.readings.some(reading => reading.unresolvedUnsafe))))
-      throw new Error('Door/hood status is ajar or a prior ajar reading is unresolved. Check the truck before remote start.');
+      throw new Error('Door/hood status is ajar or a prior ajar reading is unresolved. Check the vehicle before remote start.');
     // Persist before dispatch: a killed process or ambiguous timeout must not replay.
     c.commandAfter = now() + SETTINGS.commandInterval;
     if (command === 'refresh') c.wakeAfter = now() + SETTINGS.wakeInterval;
@@ -1137,8 +1167,7 @@ class FordAPIClient {
       c.lastCommand = { action: command, at: now(), id: receipt.id, outcome: 'Accepted; completion unverified' };
       // Estimated until Ford's own countdown arrives with the next read.
       if (command === 'start') c.startRun = { at: now(), until: now() + SETTINGS.startMinutes * 60000, estimated: true };
-      // Stop acceptance is not engine-off telemetry. Keep the existing countdown
-      // and Stop access until newer telemetry or the known countdown's expiry.
+      // Stop acceptance isn't engine-off telemetry: keep the countdown until newer telemetry or expiry.
       c.nextFetch = 0; this.store.write(c);
       return `${command === 'refresh' ? 'Wake/status refresh' : command} request accepted by Ford.\nReceipt: ${receipt.id}\nVehicle completion is unverified. Fetch telemetry later to check.`;
     } catch (e) {
@@ -1389,7 +1418,7 @@ Object.assign(FordAPIClient.prototype, {
 
 // Display options: app-wide defaults from Customize widgets, overridable per widget
 // through its Parameter, e.g. "controls", "fuel tires lock", "-photo", "bar".
-const METRICS = Object.freeze({ photo: 'Truck photo', fuel: 'Fuel & range', battery: '12V battery', tires: 'Tire pressures',
+const METRICS = Object.freeze({ photo: 'Vehicle photo', fuel: 'Fuel & range', battery: '12V battery', tires: 'Tire pressures',
   oil: 'Oil life', lock: 'Lock state', odometer: 'Odometer', doors: 'Doors', temp: 'Outside temperature',
   parked: 'Parked location', ppoa: 'Pro Power A (estimated)', ppob: 'Pro Power B (estimated)',
   ppototal: 'Pro Power total (estimated)', ppocapacity: 'Pro Power capacity (estimated)' });
@@ -1402,10 +1431,11 @@ const ACCESSORY_VIEWS = ['fuel', 'lock', 'tires', 'parked', 'status', 'ppoa', 'p
 function widgetOptions(prefs, parameter) {
   const base = (prefs && prefs.widget) || {};
   const show = Object.assign(Object.fromEntries(Object.keys(METRICS).map(k => [k, !k.startsWith('ppo')])), base.show || {});
-  const opts = { layout: { medium: base.medium || 'status', large: 'controls' }, unit: base.unit === 'bar' ? 'bar' : 'psi', vin: null, view: null };
+  const opts = { design: Object.assign({ small: 'classic', medium: 'classic', large: 'classic' }, base.design || {}), layout: { medium: base.medium || 'status', large: 'controls' }, unit: base.unit === 'bar' ? 'bar' : 'psi', vin: null, view: null };
   const only = [];
   for (const raw of String(parameter || '').toLowerCase().split(/[\s,;]+/).filter(Boolean)) {
     if (vinOK(raw.toUpperCase())) { opts.vin = raw.toUpperCase(); continue; }
+    if (['classic', 'dashboard', 'showcase'].includes(raw)) { opts.design = { small: raw, medium: raw, large: raw }; continue; }
     if (raw === 'controls' || raw === 'buttons') { opts.layout.medium = opts.layout.large = 'controls'; continue; }
     if (raw === 'status' || raw === 'info') { opts.layout.medium = opts.layout.large = 'status'; opts.view = opts.view || 'status'; continue; }
     if (raw === 'bar' || raw === 'psi') { opts.unit = raw; continue; }
@@ -1436,8 +1466,7 @@ class WidgetRenderer {
     this.run = Color.dynamic(new Color('C2410C'), new Color('EA580C'));
   }
   on(key) { return this.opts.show[key]; }
-  // A positive start estimate wins over older telemetry; newer telemetry wins.
-  // Legacy zero-until markers from unconfirmed Stop requests are not off samples.
+  // A start estimate wins over older telemetry; newer telemetry wins. Ignore legacy until:0 stop markers.
   remote() {
     const f = this.fields.remoteStart, est = this.cache.startRun;
     const tel = f && f.value ? f : null;
@@ -1446,12 +1475,12 @@ class WidgetRenderer {
   }
   place() {
     const p = this.value('position');
-    if (!p || !this.on('parked') || !parkedLocationEnabled()) return null;
+    if (!p || !this.on('parked')) return null;
     const home = this.prefs.home;
     const near = home && meters(home, p) <= SETTINGS.homeRadius;
     const known = this.cache.place && meters(this.cache.place, p) < 50 ? this.cache.place.label : null;
     return { label: near ? 'Home' : known || `${p.lat.toFixed(4)}, ${p.lon.toFixed(4)}`, home: !!near,
-      at: this.fields.position.at, url: `https://maps.apple.com/?${form({ ll: `${p.lat},${p.lon}`, q: this.prefs.name || 'F-150' })}` };
+      at: this.fields.position.at, url: `https://maps.apple.com/?${form({ ll: `${p.lat},${p.lon}`, q: this.prefs.name || 'Ford' })}` };
   }
   temp() { const t = finite(this.value('outsideTemp')); return t === null ? '—' : `${fahrenheit(t)}°F`; }
   nextRefresh() {
@@ -1497,7 +1526,7 @@ class WidgetRenderer {
   }
   truck(stack, w, h) {
     if (!this.on('photo')) return null;
-    if (!this.image) return this.symbol(stack, 'truck.pickup.side.fill', h);
+    if (!this.image) return this.symbol(stack, 'car.side.fill', h);
     const s = this.image.size, k = Math.min(w / s.width, h / s.height);
     const i = stack.addImage(this.image); i.imageSize = new Size(Math.round(s.width * k), Math.round(s.height * k));
     if (this.prefs.imageMode === 'custom') i.cornerRadius = 8;
@@ -1552,13 +1581,13 @@ class WidgetRenderer {
   }
   buttons(stack, cols, w, h) {
     const actions = [['lock', 'Lock', 'lock.fill'], ['unlock', 'Unlock', 'lock.open.fill'],
-      this.remote() ? ['stop', 'Stop', 'stop.circle.fill'] : ['start', 'Start', 'power'], ['refreshwidget', 'Refresh', 'arrow.clockwise']];
+      this.remote() ? ['stop', 'Stop', 'stop.circle.fill'] : ['start', 'Start', 'power'], ['refresh', 'Refresh', 'arrow.clockwise']].filter(a => !this.prefs.compatibility || this.prefs.compatibility.commands[a[0]] !== false);
     const grid = stack.addStack(); grid.layoutVertically(); grid.spacing = 6;
     for (let i = 0; i < actions.length; i += cols) {
       const row = grid.addStack(); row.spacing = 6;
       for (const [action, label, icon] of actions.slice(i, i + cols)) {
         const b = row.addStack(); b.layoutVertically(); b.size = new Size(w, h); b.centerAlignContent();
-        b.backgroundColor = this.panel; b.cornerRadius = 10; b.url = this.url(action);
+        b.backgroundColor = this.panel; b.cornerRadius = 10; b.url = this.url(action === 'refresh' ? 'refreshwidget' : action);
         const top = b.addStack(); top.addSpacer(); this.symbol(top, icon, 15); top.addSpacer();
         b.addSpacer(3);
         const bottom = b.addStack(); bottom.addSpacer(); this.text(bottom, label, 10, true); bottom.addSpacer();
@@ -1630,7 +1659,7 @@ class WidgetRenderer {
       for (const pair of [['fl', 'fr'], ['rl', 'rr']]) {
         const row = w.addStack();
         for (const k of pair) {
-          const v = finite(this.value(k)), flag = v !== null && v < SETTINGS.lowTire ? ' !' : '';
+          const v = finite(this.value(k)), flag = v !== null && v < alertSettings(this.prefs).tire && alertSettings(this.prefs).enabled.tires ? ' !' : '';
           tiny(row, `${k.toUpperCase()} ${this.tire(k)}${flag}`, 13, !!flag); row.addSpacer();
         }
       }
@@ -1642,8 +1671,8 @@ class WidgetRenderer {
       if (pl) w.url = pl.url;
     } else {
       const head = w.addStack(); head.centerAlignContent();
-      this.symbol(head, 'truck.pickup.side.fill', 12, white); head.addSpacer(4);
-      tiny(head, this.prefs.name || 'F-150', 13, true); head.addSpacer();
+      this.symbol(head, 'car.side.fill', 12, white); head.addSpacer(4);
+      tiny(head, this.prefs.name || 'Ford', 13, true); head.addSpacer();
       if (this.on('lock')) this.symbol(head, lockIcon, 11, white);
       w.addSpacer(3);
       const fuelRow = w.addStack(); fuelRow.centerAlignContent();
@@ -1658,7 +1687,7 @@ class WidgetRenderer {
     return w;
   }
   oldest() {
-    const times = Object.values(this.fields).filter(f => f && f.value !== null && f.value !== undefined).map(f => f.at);
+    const times = Object.values(this.fields).filter(f => f && f.value !== null && f.value !== undefined && f.value !== 'Unknown').map(f => f.at);
     return times.length && times.every(Boolean) ? Math.min(...times) : null;
   }
   frame(padding) {
@@ -1668,11 +1697,15 @@ class WidgetRenderer {
     w.refreshAfterDate = new Date(this.nextRefresh());
     return w;
   }
+  footer(notice) {
+    const issues = alertSettings(this.prefs).attention ? nightProblems(this.fields, this.prefs) : [];
+    return issues.length ? `⚠ ${issues[0]}${issues.length > 1 ? ` +${issues.length - 1}` : ''} · ${age(this.oldest())}` : (notice || `Updated ${age(this.oldest())}`);
+  }
   buildSmall(notice) {
     const w = this.frame([12, 12, 10, 12]);
     const top = w.addStack(); top.centerAlignContent(); top.spacing = 6;
     this.truck(top, 64, 24);
-    this.text(top, this.prefs.name || 'F-150', 13, true);
+    this.text(top, this.prefs.name || 'Ford', 13, true);
     w.addSpacer(6);
     if (this.on('fuel')) {
       this.text(w, `Fuel ${this.number('fuel', '%')}`, 15, true);
@@ -1680,11 +1713,73 @@ class WidgetRenderer {
     } else this.extras(w, 13, 3);
     w.addSpacer(4);
     if (!this.runningBadge(w, 11)) this.lockPill(w);
+    if (typeof this._ppoBeforeFooter === 'function') this._ppoBeforeFooter(w);
     w.addSpacer();
-    this.text(w, notice || `Updated ${age(this.oldest())}`, 9, false, this.muted);
+    this.text(w, this.footer(notice), 9, false, this.muted);
+    return w;
+  }
+  // Alternative layouts use only cached readings and the same action handlers as Classic.
+  buildDesign(family, design, notice) {
+    const w = this.frame([12, 14, 10, 14]);
+    w.backgroundColor = Color.dynamic(new Color('E6E8EB'), new Color('101B30'));
+    const isSmall = family === 'small', isLarge = family === 'large';
+    const headline = row => {
+      const col = row.addStack(); col.layoutVertically(); col.spacing = 3;
+      this.text(col, this.prefs.name || 'Ford', isSmall ? 14 : 17, true);
+      if (this.on('fuel')) this.text(col, `${this.number('range', ' mi')} to E / ${this.number('fuel', '%')}`, isSmall ? 11 : 14, false, this.muted);
+      if (this.on('odometer')) this.text(col, `Odometer: ${this.number('odometer', ' mi')}`, 10, false, this.muted);
+      return col;
+    };
+    const info = (stack, label, value) => {
+      this.text(stack, label, isSmall ? 9 : 11, true);
+      this.text(stack, value, isSmall ? 10 : 12, true, this.accent);
+    };
+    const status = stack => {
+      if (this.on('lock')) info(stack, 'Locks', this.value('lock') || 'Unknown');
+      if (this.on('doors')) info(stack, 'Doors', this.value('doors') || 'Unknown');
+      if (this.on('oil')) info(stack, 'Oil life', this.number('oil', '%'));
+      if (this.on('battery')) info(stack, '12V battery', this.value('battery') !== null ? this.number('battery', '%') : this.value('batteryHealth') || 'Unknown');
+    };
+    if (isSmall) {
+      if (design === 'showcase') {
+        headline(w); w.addSpacer(4);
+        if (!this.runningBadge(w, 9)) this.lockPill(w);
+        w.addSpacer(); this.centered(w, row => this.truck(row, 116, 42));
+      } else {
+        const row = w.addStack(); row.spacing = 6;
+        const left = row.addStack(); left.layoutVertically(); left.spacing = 4;
+        this.truck(left, 70, 32);
+        if (this.on('fuel')) { this.text(left, this.number('fuel', '%'), 13, true); this.gauge(left, 65); this.text(left, this.number('range', ' mi'), 10); }
+        const right = row.addStack(); right.layoutVertically(); right.spacing = 2; status(right);
+      }
+    } else if (design === 'showcase' && !isLarge) {
+      const row = w.addStack(); row.spacing = 8; headline(row); row.addSpacer(); this.truck(row, 120, 54);
+      w.addSpacer(4); this.parkedRow(w, 10); if (typeof this._ppoBeforeControls === 'function') this._ppoBeforeControls(w); w.addSpacer(); this.buttons(w, 4, 62, 38);
+    } else {
+      const head = w.addStack(); head.spacing = 8; headline(head); head.addSpacer(); this.truck(head, isLarge ? 140 : 95, isLarge ? 60 : 40);
+      if (this.on('fuel')) { w.addSpacer(4); this.gauge(w, isLarge ? 250 : 180); }
+      w.addSpacer(5);
+      const row = w.addStack(); row.spacing = 12;
+      const left = row.addStack(); left.layoutVertically(); left.spacing = 2; status(left);
+      if (this.on('tires')) { const middle = row.addStack(); middle.layoutVertically(); middle.spacing = 2; this.tires(middle, isLarge ? 13 : 11); }
+      if (isLarge && this.on('temp')) { const right = row.addStack(); right.layoutVertically(); info(right, 'Outside', this.temp()); }
+      if (isLarge) {
+        w.addSpacer(5); this.parkedRow(w, 10);
+        if (this.remote()) { w.addSpacer(4); this.runningBadge(w, 10, true); }
+        if (typeof this._ppoBeforeControls === 'function') this._ppoBeforeControls(w);
+        w.addSpacer(); this.buttons(w, 4, 65, 38);
+      }
+    }
+    if (typeof this._ppoBeforeFooter === 'function') this._ppoBeforeFooter(w);
+    w.addSpacer();
+    const known = Object.values(this.fields).some(f => f && f.value !== null && f.value !== undefined);
+    const state = notice || (!known ? 'Open Scriptable to set up / fetch' : this.cache.notice ? 'Cached · source unavailable' : '');
+    this.text(w, this.footer(state ? `Updated ${age(this.oldest())} · ${state}` : ''), 9, false, this.muted);
     return w;
   }
   build(family = 'medium', notice = '') {
+    const designFamily = family === 'extraLarge' ? 'large' : family;
+    if (['small', 'medium', 'large'].includes(designFamily) && this.opts.design[designFamily] !== 'classic' && ['dashboard', 'showcase'].includes(this.opts.design[designFamily])) return this.buildDesign(designFamily, this.opts.design[designFamily], notice);
     if (family === 'small') return this.buildSmall(notice);
     if (String(family).startsWith('accessory')) return this.buildAccessory(family, notice);
     const large = family === 'large' || family === 'extraLarge';
@@ -1692,7 +1787,7 @@ class WidgetRenderer {
     const w = this.frame([12, 14, 10, 14]);
     const row = w.addStack(); row.layoutHorizontally(); row.spacing = 14;
     const left = row.addStack(); left.layoutVertically(); left.spacing = 4;
-    this.text(left, this.prefs.name || 'F-150', 17, true);
+    this.text(left, this.prefs.name || 'Ford', 17, true);
     if (!large && controls) {
       // Medium + controls: compact status on the left, a 2x2 button grid on the right.
       if (!this.runningBadge(left, 11)) this.truck(left, 124, 34);
@@ -1714,15 +1809,25 @@ class WidgetRenderer {
         w.addSpacer(8); this.parkedRow(w);
         if (this.remote()) { w.addSpacer(6); this.runningBadge(w, 12, true); }
       }
-      if (large && controls) { w.addSpacer(8); this.buttons(w, 4, 70, 46); }
+      if (large && controls) { if (typeof this._ppoBeforeControls === 'function') this._ppoBeforeControls(w); w.addSpacer(8); this.buttons(w, 4, 70, 46); }
     }
     if (typeof this._ppoBeforeFooter === 'function') this._ppoBeforeFooter(w);
     w.addSpacer();
     const known = Object.values(this.fields).filter(f => f && f.value !== null && f.value !== undefined);
     const status = notice || (!known.length ? 'Open Scriptable to set up / fetch' : this.cache.notice ? 'Cached · source unavailable' : '');
-    this.text(w, `Last updated: ${age(this.oldest())}${status ? ' · ' + status : ''}`, 9, false, status ? this.ink : this.muted);
+    this.text(w, this.footer(`Last updated: ${age(this.oldest())}${status ? ' · ' + status : ''}`), 9, false, status ? this.ink : this.muted);
     return w;
   }
+}
+
+// New settings dialogs may outlive their foreground session while awaiting UI.
+function saveVehiclePreferences(store, prefs) {
+  requireApp(); store.assertLease();
+  const current = secretGet('vehicle');
+  if (!current || !prefs || current.vin !== prefs.vin)
+    throw new Error('The configured vehicle changed. Run the script again.');
+  secretSet('vehicle', prefs);
+  if (!parkedLocationEnabled(prefs)) store.purgeLocation();
 }
 
 class AppController {
@@ -1730,10 +1835,10 @@ class AppController {
   async setupVehicle() {
     const old = secretGet('vehicle') || {};
     const values = await input('Vehicle setup', 'One vehicle. Changing VIN clears saved telemetry and disconnects FordConnect consent for the old vehicle.', [
-      { label: '17-character VIN', value: old.vin }, { label: 'Badge / name', value: old.name || 'F-150 STX' },
+      { label: '17-character VIN', value: old.vin }, { label: 'Badge / name', value: old.name || 'Ford' },
     ]);
     if (!values) return null;
-    const vin = values[0].toUpperCase(), name = values[1] || 'F-150';
+    const vin = values[0].toUpperCase(), name = values[1] || 'Ford';
     if (!vinOK(vin)) throw new Error('Enter a valid 17-character VIN (no I, O, Q).');
     if (old.vin && old.vin !== vin) {
       secretRemove('token.official');
@@ -1741,6 +1846,57 @@ class AppController {
     }
     // Photo choices belong to the VIN; a new truck starts from Ford's photo again.
     const prefs = Object.assign({}, old.vin === vin ? old : {}, { vin, name }); secretSet('vehicle', prefs); return prefs;
+  }
+  async compatibility(prefs) {
+    selfTest();
+    await message('Self-test passed', 'Offline script checks passed. Next, check available vehicle features.');
+    let c = this.store.read() || { fields: {} }, note = 'Using saved readings.';
+    if (secretGet('token.official') || secretGet('token.mobile')) {
+      try { const result = await new FordAPIClient(this.auth, this.store, prefs).getVehicleStatus(); c = result.cache; note = result.note; }
+      catch (e) { note = 'Cloud check failed: ' + e.message + '\nUsing saved readings.'; }
+    } else note = 'Connect FordPass or FordConnect and rerun this check for cloud suggestions.';
+    const fields = c.fields || {};
+    const mapping = { fuel: ['fuel', 'range'], battery: ['battery'], tires: ['fl', 'fr', 'rl', 'rr'], oil: ['oil'], lock: ['lock'], odometer: ['odometer'], doors: ['doors'], temp: ['outsideTemp'], parked: ['position'] };
+    const previous = prefs.compatibility;
+    const cfg = prefs.widget || {}, show = Object.assign({}, cfg.show || {});
+    if (!previous) for (const k of Object.keys(mapping)) {
+      if (show[k] === undefined) show[k] = mapping[k].some(f => fields[f] && fields[f].value != null);
+    }
+    const commands = Object.assign({ lock: true, unlock: true, start: true, stop: true, refresh: true }, previous && previous.commands || {});
+    const verified = Object.assign({}, previous && previous.verified || {});
+    await message('Compatibility check', note + '\n\nReported readings are suggested. Missing readings are unverified, not proof of incompatibility. Select what is available in your Ford app.');
+    const labels = { lock: 'Lock', unlock: 'Unlock', start: 'Remote start', stop: 'Remote stop', refresh: 'Wake / refresh' };
+    for (;;) {
+      const a = new Alert(); a.title = 'Vehicle features';
+      a.message = 'Tap to select or deselect features. Commands are unverified until tested. Your selections can be changed later.';
+      const keys = Object.keys(mapping), actions = Object.keys(labels);
+      keys.forEach(k => a.addAction(`${show[k] ? '✓' : '○'} ${METRICS[k]}${mapping[k].some(f => fields[f] && fields[f].value != null) ? ' · reported' : ' · unverified'}`));
+      actions.forEach(k => a.addAction(`${commands[k] ? '✓' : '○'} ${labels[k]} · ${verified[k] ? 'owner confirmed' : 'unverified'}`));
+      a.addAction('Enable reported readings'); a.addAction('Test a command…'); a.addCancelAction('Done');
+      const i = await a.presentSheet();
+      if (i < 0) break;
+      if (i < keys.length) show[keys[i]] = !show[keys[i]];
+      else if (i < keys.length + actions.length) { const k = actions[i - keys.length]; commands[k] = !commands[k]; }
+      else if (i === keys.length + actions.length) {
+        for (const k of keys) if (mapping[k].some(f => fields[f] && fields[f].value != null)) show[k] = true;
+      } else {
+        const t = new Alert(); t.title = 'Optional command test'; t.message = 'Each test sends a real command after a separate confirmation. Check the vehicle yourself. Start only outdoors.';
+        actions.forEach(k => t.addAction(labels[k])); t.addCancelAction('Cancel');
+        const n = await t.presentSheet();
+        if (n >= 0) {
+          const k = actions[n];
+          const sent = await this.action(k, prefs, true);
+          if (sent) {
+            const v = new Alert(); v.title = 'Did the vehicle complete it?'; v.message = 'Ford accepting a request does not confirm completion. Check your vehicle before answering.';
+            v.addAction('Yes, completed'); v.addAction('No / unsure'); v.addCancelAction('Cancel');
+            const answer = await v.presentAlert();
+            if (answer >= 0) verified[k] = answer === 0;
+          }
+        }
+      }
+      prefs.widget = Object.assign({}, cfg, { show }); prefs.compatibility = { commands, verified }; saveVehiclePreferences(this.store, prefs);
+    }
+    prefs.widget = Object.assign({}, cfg, { show }); prefs.compatibility = { commands, verified }; saveVehiclePreferences(this.store, prefs);
   }
   async details(prefs) {
     const c = this.store.read() || {}, f = c.fields || {};
@@ -1755,7 +1911,7 @@ class AppController {
     });
     const photo = prefs.imageMode === 'off' ? 'Icon (photo off)' : prefs.imageMode === 'custom' ? 'From your Photos'
       : c.image && c.image.source ? `${c.image.source} · ${age(c.image.at)}` : 'Not downloaded yet';
-    lines.push(`Truck photo: ${photo}`);
+    lines.push(`Vehicle photo: ${photo}`);
     const n = c.night;
     lines.push(`Evening check: ${!nightSettings(prefs).enabled ? 'Off' : n && n.done ? `${n.problems.length ? n.problems.join(', ') : n.securityFresh === true ? 'All good' : 'Limited status; current lock/door readings not confirmed'} · ${age(n.at)}` : 'Not run yet'}`);
     if (c.lastCommand) lines.push(`Last request: ${c.lastCommand.action}\n${c.lastCommand.outcome} · ${age(c.lastCommand.at)}`);
@@ -1763,7 +1919,7 @@ class AppController {
   }
   async truckPhoto(prefs) {
     const api = new FordAPIClient(this.auth, this.store, prefs);
-    const a = new Alert(); a.title = 'Truck photo';
+    const a = new Alert(); a.title = 'Vehicle photo';
     a.message = 'Use the picture Ford shows for your VIN in the FordPass app, or pick your own. A cut-out PNG with no background looks best on the widget.';
     ['Download from Ford', 'Download from Ford: choose view', 'Choose from Photos…', 'Use simple truck icon'].forEach(l => a.addAction(l));
     a.addCancelAction('Cancel');
@@ -1773,7 +1929,7 @@ class AppController {
       let angle = null;
       if (choice === 1) {
         const v = new Alert(); v.title = 'Choose a view';
-        v.message = 'Ford renders views 1-5. View 4 is the usual FordPass angle. Some trucks only have one view.';
+        v.message = 'Ford renders views 1-5. View 4 is the usual FordPass angle. Some vehicles only have one view.';
         for (let n = 1; n <= 5; n++) v.addAction(`View ${n}${n === 4 ? ' (default)' : ''}`);
         v.addCancelAction('Cancel');
         const pick = await v.presentSheet();
@@ -1781,8 +1937,8 @@ class AppController {
         angle = pick + 1;
       }
       Object.assign(prefs, { imageMode: 'auto', imageAngle: angle }); secretSet('vehicle', prefs);
-      try { await message('Truck photo', `Downloaded from ${await api.updateVehicleImage(true)}.`); }
-      catch (e) { await message('Truck photo not available', e.message + '\n\nYou can choose a picture from Photos instead.'); return; }
+      try { await message('Vehicle photo', `Downloaded from ${await api.updateVehicleImage(true)}.`); }
+      catch (e) { await message('Vehicle photo not available', e.message + '\n\nYou can choose a picture from Photos instead.'); return; }
     } else if (choice === 2) {
       let img;
       try { img = await Photos.fromLibrary(); } catch (_) { return; }
@@ -1806,13 +1962,13 @@ class AppController {
       c.nextFetch = 0; this.store.write(c);
       c = (await new FordAPIClient(this.auth, this.store, prefs).getVehicleStatus()).cache;
       if (!c.fetchedAt || c.fetchedAt < now() - 5 * 60000) return c;
-      const problems = nightProblems(c.fields);
+      const problems = nightProblems(c.fields, prefs);
       const securityFresh = nightSecurityFresh(c.fields);
       c.night = Object.assign({}, c.night, { done: true, at: now(), problems, securityFresh }); this.store.write(c);
       if (problems.length || night.notifyOk) {
-        const note = new Notification(); note.title = `${prefs.name || 'F-150'} · evening check`;
-        note.body = problems.length ? problems.join(' · ') : securityFresh ? 'Locked and closed; no problems in the reported readings.'
-          : 'No problems found in available readings. Current lock/door status could not be confirmed.';
+        const note = new Notification(); note.title = `${prefs.name || 'Ford'} · evening check`;
+        note.body = problems.length ? problems.join(' · ') + ' · Check reading ages in FordWidget.' : securityFresh ? 'Locked and closed; no problems in the reported readings.'
+          : 'No enabled alerts found in available readings. Current lock/door status could not be confirmed.';
         note.openURL = new WidgetRenderer(prefs, c).url();
         try { await note.schedule(); } catch (_) { /* the widget still shows the result */ }
       }
@@ -1829,33 +1985,81 @@ class AppController {
     a.addCancelAction('Close');
     const i = await a.presentAlert();
     if (i === 0) Safari.open(pl.url);
-    if (i === 1) { const p = c.fields.position.value; prefs.home = { lat: p.lat, lon: p.lon }; secretSet('vehicle', prefs); await message('Home saved', 'The widget will say “Parked · Home” when the truck is within about 150 m of here.'); }
+    if (i === 1) { const p = c.fields.position.value; prefs.home = { lat: p.lat, lon: p.lon }; secretSet('vehicle', prefs); await message('Home saved', 'The widget will say “Parked · Home” when the vehicle is within about 150 m of here.'); }
     if (i === 2) { delete prefs.home; secretSet('vehicle', prefs); }
   }
-  // No weather service polling: the truck reports its own outside temperature.
-  async startWeather(prefs = secretGet('vehicle')) {
-    const f = (this.store.read() || {}).fields || {}, t = f.outsideTemp;
-    const p = parkedLocationEnabled(prefs) && parkedLocationEnabled() && f.position && f.position.value;
+  // No weather service polling: the vehicle reports its own outside temperature.
+  async startWeather() {
+    const f = (this.store.read() || {}).fields || {}, t = f.outsideTemp, p = f.position && f.position.value;
     const hint = deg => deg <= 40 ? ' Cold: a full run warms the cabin.' : deg >= 85 ? ' Hot: a full run cools the cabin.' : '';
-    if (t && t.at && t.at > now() - 2 * 3600000) return `Outside ${fahrenheit(t.value)}°F (truck sensor, ${age(t.at)}).${hint(fahrenheit(t.value))}`;
+    if (t && t.at && t.at > now() - 2 * 3600000) return `Outside ${fahrenheit(t.value)}°F (vehicle sensor, ${age(t.at)}).${hint(fahrenheit(t.value))}`;
     if (p) {
       try {
-        // Only when the truck's reading is old: one request, ~1 km-rounded position, no key, no account.
+        // Only when the vehicle's reading is old: one request, ~1 km-rounded position, no key, no account.
         const r = new Request('https://api.open-meteo.com/v1/forecast?' + form({ latitude: p.lat.toFixed(2), longitude: p.lon.toFixed(2),
           current: 'temperature_2m', temperature_unit: 'fahrenheit' }));
         r.timeoutInterval = 5;
         const j = await r.loadJSON();
         const v = finite(j && j.current && j.current.temperature_2m);
-        if (v !== null) return `Outside about ${Math.round(v)}°F near the truck (Open-Meteo, now).${hint(Math.round(v))}`;
+        if (v !== null) return `Outside about ${Math.round(v)}°F near the vehicle (Open-Meteo, now).${hint(Math.round(v))}`;
       } catch (_) { /* no temperature line */ }
     }
-    return t ? `Outside ${fahrenheit(t.value)}°F (truck sensor, ${age(t.at)}).` : '';
+    return t ? `Outside ${fahrenheit(t.value)}°F (vehicle sensor, ${age(t.at)}).` : '';
+  }
+  async chooseDesign(prefs) {
+    const sizes = ['small', 'medium', 'large'], designs = ['classic', 'showcase', 'dashboard'];
+    const sizePicker = new Alert(); sizePicker.title = 'Widget gallery · choose size';
+    sizes.forEach(s => sizePicker.addAction(s[0].toUpperCase() + s.slice(1)));
+    sizePicker.addCancelAction('Cancel');
+    const selected = await sizePicker.presentSheet(); if (selected < 0) return;
+    const family = sizes[selected];
+    for (;;) {
+      const cfg = prefs.widget || {}, saved = Object.assign({ small: 'classic', medium: 'classic', large: 'classic' }, cfg.design || {});
+      const picker = new Alert(); picker.title = `${family[0].toUpperCase() + family.slice(1)} design`;
+      picker.message = 'Classic: balanced status. Showcase: vehicle and controls. Dashboard: detailed readings. Tap a design to preview it, then Close and Use design.';
+      designs.forEach(d => picker.addAction(`${saved[family] === d ? '✓ ' : ''}${d[0].toUpperCase() + d.slice(1)}`));
+      picker.addCancelAction('Done'); const choice = await picker.presentSheet(); if (choice < 0) return;
+      const design = designs[choice], previewPrefs = Object.assign({}, prefs, { widget: Object.assign({}, cfg, { design: Object.assign({}, saved, { [family]: design }) }) });
+      const preview = new WidgetRenderer(previewPrefs, this.store.read()).build(family);
+      if (family === 'small') await preview.presentSmall();
+      else if (family === 'medium') await preview.presentMedium();
+      else await preview.presentLarge();
+      const confirm = new Alert(); confirm.title = `Use ${design}?`; confirm.message = `Apply this design to ${family} widgets. You can change it again later.`;
+      confirm.addAction('Use design'); confirm.addCancelAction('Keep current');
+      if (await confirm.presentAlert() === 0) { prefs.widget = previewPrefs.widget; saveVehiclePreferences(this.store, prefs); return; }
+    }
+  }
+  async alertOptions(prefs) {
+    const names = { lock: 'Unlocked', doors: 'Door / hood / tailgate open', tires: 'Low tire pressure', fuel: 'Low fuel', oil: 'Low oil life', battery: 'Low 12V battery', engine: 'Remote start running' };
+    for (;;) {
+      const settings = alertSettings(prefs), keys = Object.keys(names);
+      const a = new Alert(); a.title = 'Alerts & attention';
+      a.message = 'Evening notifications use these conditions. Attention shows the first matching cached reading on widgets with its age. Missing readings are not treated as healthy. iOS controls refresh timing.';
+      keys.forEach(k => a.addAction(`${settings.enabled[k] ? '✓' : '○'} ${names[k]}`));
+      a.addAction(`Tire threshold: below ${settings.tire} psi`);
+      a.addAction(`Fuel threshold: below ${settings.fuel}%`);
+      a.addAction(`Oil threshold: at or below ${settings.oil}%`);
+      a.addAction(`Battery threshold: below ${settings.battery}%`);
+      a.addAction(`Widget attention: ${settings.attention ? 'On' : 'Off'}`);
+      a.addCancelAction('Done'); const i = await a.presentSheet(); if (i < 0) return;
+      const next = Object.assign({}, prefs.alerts || {});
+      if (i < keys.length) next.enabled = Object.assign({}, settings.enabled, { [keys[i]]: !settings.enabled[keys[i]] });
+      else if (i < keys.length + 4) {
+        const key = ['tire', 'fuel', 'oil', 'battery'][i - keys.length], max = 100;
+        const values = await input('Alert threshold', `Enter a number from 0 to ${max}${key === 'tire' ? ' psi' : '%'}.`, [{ label: key, value: String(settings[key]) }]);
+        if (!values) continue;
+        const n = finite(values[0]);
+        if (n === null || n < 0 || n > max) { await message('Invalid threshold', `Enter a number from 0 to ${max}.`); continue; }
+        next[key] = n;
+      } else next.attention = !settings.attention;
+      prefs.alerts = next; saveVehiclePreferences(this.store, prefs);
+    }
   }
   async customize(prefs) {
     for (;;) {
       const o = widgetOptions(prefs, ''), cfg = prefs.widget || {};
       const a = new Alert(); a.title = 'Customize widgets';
-      a.message = 'Applies to every FordWidget widget. To change one widget, edit it and type words in Parameter: "controls", "fuel tires lock", "-photo", "bar". Lock Screen: "fuel", "lock", "tires" (circle) or "status", "tires", "parked" (rectangle).\n\nEvening check: the first widget refresh after the set hour reads the truck’s last state once and notifies you of problems.';
+      a.message = 'Applies to every FordWidget widget. To change one widget, edit it and type words in Parameter: "controls", "fuel tires lock", "-photo", "bar". Lock Screen: "fuel", "lock", "tires" (circle) or "status", "tires", "parked" (rectangle).\n\nEvening check: the first widget refresh after the set hour reads the vehicle’s last state once and notifies you of problems.';
       const keys = Object.keys(METRICS);
       keys.forEach(k => a.addAction(`${o.show[k] ? '✓' : '○'}  ${METRICS[k]}`));
       a.addAction(`Medium layout: ${o.layout.medium === 'controls' ? 'Buttons' : 'Status'}`);
@@ -1901,7 +2105,7 @@ class AppController {
     try { await n.schedule(); } catch (_) { /* The foreground alert remains available if notifications are denied. */ }
     await message('FordWidget', body);
   }
-  async action(action, prefs) {
+  async action(action, prefs, compatibilityTest = false) {
     const api = new FordAPIClient(this.auth, this.store, prefs);
     if (action === 'photo') { await this.truckPhoto(prefs); return; }
     if (action === 'parked') { await this.parked(prefs); return; }
@@ -1916,23 +2120,27 @@ class AppController {
       }
       await api.updatePlace();
       if ((prefs.imageMode || 'auto') === 'auto' && secretGet('token.mobile')) {
-        try { const source = await api.updateVehicleImage(false); if (source) result.note += `\nTruck photo downloaded from ${source}.`; }
-        catch (e) { result.note += '\nTruck photo: ' + e.message.split('\n')[0]; }
+        try { const source = await api.updateVehicleImage(false); if (source) result.note += `\nVehicle photo downloaded from ${source}.`; }
+        catch (e) { result.note += '\nVehicle photo: ' + e.message.split('\n')[0]; }
       }
       await message('Telemetry', result.note); return;
     }
     if (!Object.prototype.hasOwnProperty.call(COMMANDS, action)) throw new Error('Unknown action.');
+    if (!compatibilityTest && prefs.compatibility && prefs.compatibility.commands[action] === false) throw new Error('This command is disabled in Vehicle features.');
     const a = new Alert(); a.title = `${action === 'refresh' ? 'Wake vehicle' : action.toUpperCase()} · ${prefs.name}`;
-    const weather = action === 'start' ? await this.startWeather(prefs) : '';
-    a.message = action === 'start' ? `${weather ? weather + '\n\n' : ''}Use only with the truck safely parked outdoors. Sends Lock, confirms that command, then requests engine start.` : action === 'refresh' ? 'Requests a modem wake/status refresh. Updated readings may take time. Limited to one attempt per 15 minutes.' : `Send ${action} to your vehicle?\n\nOnly continue if you tapped this in FordWidget.`;
+    const weather = action === 'start' ? await this.startWeather() : '';
+    a.message = action === 'start' ? `${weather ? weather + '\n\n' : ''}Use only with the vehicle safely parked outdoors. Sends Lock, confirms that command, then requests engine start.` : action === 'refresh' ? 'Requests a modem wake/status refresh. Updated readings may take time. Limited to one attempt per 15 minutes.' : `Send ${action} to your vehicle?\n\nOnly continue if you tapped this in FordWidget.`;
+    if (prefs.compatibility && !prefs.compatibility.verified[action]) a.message += '\n\nUnverified for this vehicle.';
     a.addAction('Send command'); a.addCancelAction('Cancel');
     if (await a.presentAlert() < 0) return;
     let result;
-    try { result = await api.sendCommand(prefs.vin, action); }
+    let sent = false;
+    try { result = await api.sendCommand(prefs.vin, action); sent = true; }
     catch (e) { result = 'Command not confirmed.\n' + e.message; }
     // Build a new timeline from actual telemetry, never predicted command effects.
     Script.setWidget(new WidgetRenderer(prefs, this.store.read()).build('large'));
     await this.notify(result);
+    return sent;
   }
   async run() {
     if (config.runsInWidget) {
@@ -1956,11 +2164,11 @@ class AppController {
       const saved = secretGet('credentials');
       if (saved && saved.password !== undefined) secretSet('credentials', { username: saved.username });
       let prefs = secretGet('vehicle');
-      if (!prefs) prefs = await this.setupVehicle();
+      if (!prefs) { prefs = await this.setupVehicle(); if (prefs) await this.compatibility(prefs); }
       if (!prefs) return;
       const action = args.queryParameters.action;
       if (action) { await this.action(action, prefs); return; }
-      const menu = new Alert(); menu.title = prefs.name + ' · ' + FORDWIDGET_VERSION; menu.message = 'Telemetry reads do not wake the truck. Refresh sends an explicit wake request.';
+      const menu = new Alert(); menu.title = prefs.name + ' · ' + FORDWIDGET_VERSION; menu.message = 'Telemetry reads do not wake the vehicle. Refresh sends an explicit wake request.';
       const items = [
         ['Fetch telemetry', () => this.action('fetch', prefs)],
         ['Lock', () => this.action('lock', prefs)],
@@ -1973,9 +2181,12 @@ class AppController {
         ['Pro Power', () => this.action('propower', prefs)],
         ['Parked location', () => this.parked(prefs)],
         ['Customize widgets', () => this.customize(prefs)],
-        ['Truck photo', () => this.truckPhoto(prefs)],
+        ['Widget gallery', () => this.chooseDesign(prefs)],
+        ['Alerts & attention', () => this.alertOptions(prefs)],
+        ['Vehicle photo', () => this.truckPhoto(prefs)],
         ['Connect FordPass', () => this.auth.connectMobile()],
         ['Connect FordConnect', () => this.auth.connectOfficial()],
+        ['Vehicle features / compatibility', () => this.compatibility(prefs)],
         ['Vehicle setup', async () => { prefs = await this.setupVehicle() || prefs; }],
         ['Sign out of Ford', () => this.signOut()],
         ['Run self-test', async () => { selfTest(); await message('Self-test', 'All offline checks passed. No network calls or commands.'); }],
@@ -2148,10 +2359,16 @@ function ppoAdditiveSummary(renderer, widget, family, selected, originalText) {
 }
 function ppoBuildAdditive(renderer, family, notice, selected) {
   const small = family === 'small', large = family === 'large' || family === 'extraLarge';
-  const names = ['frame', 'text', 'truck', 'pill', 'buttons', 'tires', '_ppoBeforeFooter'];
+  const names = ['frame', 'text', 'truck', 'pill', 'buttons', 'tires', '_ppoBeforeControls', '_ppoBeforeFooter'];
   const descriptors = Object.create(null), saved = Object.create(null);
   for (const name of names) { descriptors[name] = Object.getOwnPropertyDescriptor(renderer, name); saved[name] = renderer[name]; }
   let widget = null, inserted = false;
+  const insert = root => {
+    if (inserted || root !== widget) return;
+    inserted = true; root.addSpacer(large ? 4 : 2);
+    if (large) ppoDashboardPanel(renderer, root, selected, saved.text);
+    else ppoAdditiveSummary(renderer, root, family, selected, saved.text);
+  };
   try {
     // Compact the existing layout instead of replacing or filtering its content.
     // All overrides are instance-local and restored even if rendering throws.
@@ -2159,22 +2376,15 @@ function ppoBuildAdditive(renderer, family, notice, selected) {
       widget = saved.frame.call(this, large ? [8, 12, 7, 12] : small ? [8, 10, 7, 10] : [6, 11, 6, 11]);
       return widget;
     };
-    if (large) renderer._ppoBeforeFooter = function(root) {
-      if (typeof saved._ppoBeforeFooter === 'function') saved._ppoBeforeFooter.call(this, root);
-      if (!inserted && root === widget) {
-        inserted = true;
-        root.addSpacer(6);
-        ppoAdditiveSummary(this, root, family, selected, saved.text);
-      }
+    for (const name of ['_ppoBeforeControls', '_ppoBeforeFooter']) renderer[name] = function(root) {
+      if (typeof saved[name] === 'function') saved[name].call(this, root);
+      insert(root);
     };
     renderer.text = function(stack, content, size = 12, bold = false, color = this.ink) {
       // Upstream's final root text is its nine-point, non-bold timestamp/notice.
       // Check the root and text signature, so arbitrary small-widget notices work.
       // This also remains a fallback for bases without the before-footer hook.
-      if (!inserted && widget && stack === widget && size === 9 && bold === false) {
-        inserted = true;
-        ppoAdditiveSummary(this, widget, family, selected, saved.text);
-      }
+      if (!inserted && widget && stack === widget && size === 9 && bold === false) insert(widget);
       return saved.text.call(this, stack, content, Math.max(7, size * (small ? 0.85 : large ? 0.9 : 0.88)), bold, color);
     };
     renderer.truck = function(stack, width, height) {
@@ -2191,9 +2401,7 @@ function ppoBuildAdditive(renderer, family, notice, selected) {
       pill.setPadding(2, 5, 2, 5); return pill;
     };
     renderer.buttons = function(stack, columns, width, height) {
-      const controls = stack.addStack(); controls.layoutVertically(); controls.spacing = 2;
-      saved.text.call(this, controls, 'Engine / locks / refresh', large ? 8 : 7, true, this.muted);
-      return saved.buttons.call(this, controls, columns, width, Math.min(height, large ? 40 : 34));
+      return saved.buttons.call(this, stack, columns, width, Math.min(height, large ? 34 : 30));
     };
     return PPO_UI_ORIGINAL_BUILD.call(renderer, family, notice);
   } finally {
@@ -2335,8 +2543,8 @@ AppController.prototype.proPowerDetails = async function(prefs) {
   }
 };
 const PPO_UI_ORIGINAL_ACTION = AppController.prototype.action;
-AppController.prototype.action = async function(action, prefs) {
-  if (!['propower', 'ppofetch', 'ppostatus'].includes(action)) return PPO_UI_ORIGINAL_ACTION.call(this, action, prefs);
+AppController.prototype.action = async function(action, prefs, compatibilityTest = false) {
+  if (!['propower', 'ppofetch', 'ppostatus'].includes(action)) return PPO_UI_ORIGINAL_ACTION.call(this, action, prefs, compatibilityTest);
   requireApp();
   if (action === 'ppofetch') {
     try { const result = await new FordAPIClient(this.auth, this.store, prefs).readProPower(true); await message('Pro Power cloud cache', result.note); }
@@ -2345,7 +2553,7 @@ AppController.prototype.action = async function(action, prefs) {
   return this.proPowerDetails(prefs);
 };
 
-// Large mixed dashboard only. Data, authentication and vehicle actions are unchanged.
+// Classic keeps its existing PPO dashboard; other gallery designs add a compact section.
 function ppoDashboardAge(at, clock = now()) {
   if (typeof at !== 'number' || !Number.isFinite(at) || at <= 0 || at > clock) return 'unknown';
   const seconds = Math.floor((clock - at) / 1000), minutes = Math.floor(seconds / 60);
@@ -2353,6 +2561,31 @@ function ppoDashboardAge(at, clock = now()) {
   if (minutes < 60) return minutes + 'm ago';
   const hours = Math.floor(minutes / 60);
   return hours < 48 ? hours + 'h ' + minutes % 60 + 'm ago' : Math.floor(hours / 24) + 'd ' + hours % 24 + 'h ago';
+}
+
+function ppoDashboardPanel(renderer, widget, selected, originalText = renderer.text) {
+  const snapshot = ppoSnapshotFor(renderer.cache, renderer.prefs), view = ppoView(snapshot);
+  const entries = ppoEntries(ppoEstimated(snapshot), selected);
+  const text = (stack, content, size, bold = false, color = renderer.muted) =>
+    originalText.call(renderer, stack, content, size, bold, color);
+  const panel = widget.addStack(); panel.layoutVertically(); panel.spacing = 1; panel.url = renderer.url('propower');
+  const header = panel.addStack(); header.layoutHorizontally(); header.centerAlignContent(); header.spacing = 6;
+  text(header, 'Pro Power · last reported estimates', 9, true, renderer.ink);
+  header.addSpacer(); text(header, 'Sample time unknown', 7);
+  text(panel, 'Status result: ' + ppoDashboardAge(view.commandAt), 7);
+  const mode = view.latestMode || {}, modeValue = ['OFF', 'LOW', 'HIGH'].includes(mode.value) ? mode.value : 'unknown';
+  text(panel, 'Ford mode: ' + modeValue + ' · reported ' + ppoDashboardAge(mode.at), 7);
+  for (let i = 0; i < entries.length; i += 2) {
+    const row = panel.addStack(); row.layoutHorizontally(); row.spacing = 8;
+    row.addSpacer();
+    for (const item of entries.slice(i, i + 2)) {
+      const cell = row.addStack(); cell.layoutVertically(); cell.size = new Size(138, 0);
+      const label = item.label === 'Combined capacity' ? 'Combined cap' : item.label;
+      text(cell, label + ' ' + ppoPowerText(item.value), 12, true, renderer.ink);
+    }
+    row.addSpacer();
+  }
+  return panel;
 }
 
 function ppoDashboardVehicle(renderer, widget) {
@@ -2415,7 +2648,7 @@ function ppoDashboardVehicle(renderer, widget) {
   return vehicle;
 }
 
-function ppoDashboardPanel(renderer, widget, selected) {
+function ppoClassicDashboardPanel(renderer, widget, selected) {
   const snapshot = ppoSnapshotFor(renderer.cache, renderer.prefs), view = ppoView(snapshot);
   const entries = ppoEntries(ppoEstimated(snapshot), selected);
   const panel = widget.addStack(); panel.layoutVertically(); panel.spacing = 2; panel.url = renderer.url('propower');
@@ -2443,30 +2676,36 @@ function ppoBuildDashboard(renderer, family, notice, selected) {
   const widget = renderer.frame([8, 12, 8, 12]);
   // The root retains the main-menu target; only the PPO panel opens its details.
   ppoDashboardVehicle(renderer, widget);
-  widget.addSpacer(6); ppoDashboardPanel(renderer, widget, selected);
+  widget.addSpacer(6); ppoClassicDashboardPanel(renderer, widget, selected);
   widget.addSpacer();
-  if (renderer.opts.layout.large === 'controls') {
+  const permissions = renderer.prefs.compatibility && renderer.prefs.compatibility.commands;
+  const controls = !permissions || ['lock', 'unlock', renderer.remote() ? 'stop' : 'start', 'refresh'].some(action => permissions[action] !== false);
+  if (renderer.opts.layout.large === 'controls' && controls) {
     renderer.text(widget, 'Vehicle controls', 8, true, renderer.muted);
     widget.addSpacer(2); renderer.buttons(widget, 4, 64, 34);
   }
   widget.addSpacer(3);
   const status = notice || (renderer.cache.notice ? 'cached source unavailable' : '');
-  renderer.text(widget, 'Oldest vehicle reading: ' + ppoDashboardAge(renderer.oldest()) +
-    (status ? ' · ' + status : ''), 8, false, renderer.muted);
+  const line = 'Oldest vehicle reading: ' + ppoDashboardAge(renderer.oldest()) + (status ? ' · ' + status : '');
+  const footer = typeof renderer.footer === 'function' ? renderer.footer(line) : line;
+  renderer.text(widget, footer, 8, false, renderer.muted);
+  if (notice && !footer.includes(notice)) renderer.text(widget, notice, 8, false, renderer.muted);
   return widget;
 }
 
 const PPO_DASHBOARD_ORIGINAL_BUILD = WidgetRenderer.prototype.build;
 WidgetRenderer.prototype.build = function(family = 'medium', notice = '') {
-  const selected = ppoSelected(this);
-  if ((family === 'large' || family === 'extraLarge') && selected.length && ppoHasOriginalSelection(this))
+  const selected = ppoSelected(this), design = this.opts.design && this.opts.design.large || 'classic';
+  // Keep the existing mixed Classic dashboard; other gallery designs retain
+  // their upstream vehicle layout and receive the compact additive section.
+  if ((family === 'large' || family === 'extraLarge') && design === 'classic' && selected.length && ppoHasOriginalSelection(this))
     return ppoBuildDashboard(this, family, notice, selected);
   return PPO_DASHBOARD_ORIGINAL_BUILD.call(this, family, notice);
 };
 
 // Local metadata only: fixed gate names, fixed cache fields, and no token reads.
 // Missing historical HTTP metadata stays unknown; a gate is not an HTTP trace.
-const FORDWIDGET_VERSION = '0.1.8';
+const FORDWIDGET_VERSION = '0.1.9';
 const WIDGET_DIAGNOSTIC_GATES = Object.freeze([
   'commands', 'commands.generalStatus', 'commands.proPower', 'telemetry.mobile',
   'telemetry.proPower', 'auth.mobile', 'auth.autonomic'
@@ -2874,6 +3113,8 @@ FordAPIClient.prototype.requestGeneralStatus = async function(confirmed = false)
 // Original Wake, engine and lock actions keep their existing handlers.
 AppController.prototype.refreshWidget = async function(prefs) {
   requireApp();
+  if (prefs && prefs.compatibility && prefs.compatibility.commands && prefs.compatibility.commands.refresh === false)
+    throw new Error('This command is disabled in Vehicle features.');
   const vin = prefs && prefs.vin, steps = {};
   let attemptAt = null;
   const stageCodes = {
@@ -3013,9 +3254,9 @@ AppController.prototype.refreshWidget = async function(prefs) {
   return finish('completed', lines.join('\n'));
 };
 const WIDGET_REFRESH_ORIGINAL_ACTION = AppController.prototype.action;
-AppController.prototype.action = async function(action, prefs) {
+AppController.prototype.action = async function(action, prefs, ...rest) {
   if (action === 'refreshwidget') return this.refreshWidget(prefs);
-  return WIDGET_REFRESH_ORIGINAL_ACTION.call(this, action, prefs);
+  return WIDGET_REFRESH_ORIGINAL_ACTION.call(this, action, prefs, ...rest);
 };
 
 // Optional reports stay separate from routine vehicle and Pro Power actions.
@@ -3131,6 +3372,9 @@ function selfTest() {
   const probs = nightProblems({ lock: { value: 'Unlocked' }, rr: { value: 26 }, fl: { value: 35 }, fuel: { value: 9 } });
   assert(probs.length === 3 && probs[0] === 'Unlocked' && /RR 26 psi/.test(probs[1]), 'evening problems');
   assert(nightProblems({ lock: { value: 'Locked' }, fl: { value: 35 } }).length === 0, 'evening all good');
+  assert(nightProblems({ fuel: { value: 20 } }, { alerts: { fuel: 25 } }).length === 1, 'custom fuel threshold');
+  assert(nightProblems({ fuel: { value: 5 } }, { alerts: { enabled: { fuel: false } } }).length === 0, 'disabled fuel alert');
+  assert(!alertSettings({}).attention && alertSettings({ alerts: { attention: true } }).attention, 'attention opt in');
   assert(widgetOptions({}, 'lock').view === 'lock' && widgetOptions({}, 'parked').view === 'parked', 'lock screen views');
   const rr = new WidgetRenderer({}, { fields: { remoteStart: { value: { until: now() + 60000 }, at: now() - 1000 } }, startRun: { at: now() - 500, until: 0 } });
   assert(rr.remote() && rr.remote().until > now(), 'unconfirmed stop does not hide running telemetry');
@@ -3140,6 +3384,8 @@ function selfTest() {
   assert(o.layout.medium === 'controls' && o.unit === 'bar' && !o.show.photo && o.show.tires, 'saved widget options');
   o = widgetOptions({}, 'fuel, tires lock psi');
   assert(o.show.fuel && o.show.tires && o.show.lock && !o.show.oil && !o.show.photo && o.unit === 'psi', 'parameter: show only');
+  assert(widgetOptions({ widget: { design: { small: 'showcase' } } }, '').design.small === 'showcase', 'saved design');
+  assert(widgetOptions({}, 'dashboard').design.large === 'dashboard', 'design parameter override');
   o = widgetOptions({}, 'buttons -photo no-oil 1FTFW1E50JFA00001');
   assert(o.layout.medium === 'controls' && !o.show.photo && !o.show.oil && o.show.fuel && o.vin === '1FTFW1E50JFA00001', 'parameter: hide, layout, VIN');
   assert(authDetail('{"error":"invalid_grant","error_description":"AADB2C90080: The provided grant has expired."}') === ' invalid_grant: AADB2C90080: The provided grant has expired.', 'login error detail');

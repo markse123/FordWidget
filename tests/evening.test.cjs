@@ -72,7 +72,7 @@ test('fresh root response times cannot substitute for missing or invalid securit
     if (missing === 'hood' || missing === 'all') delete responseMetrics.hoodStatus.updateTime;
     const { h, result } = await evening({ responseMetrics, responseTime: iso(TIME) });
     const field = missing === 'lock' ? 'lock' : 'doors';
-    assert.equal(result.fields[field].at, null, 'Component status does not borrow the root response time');
+    assert.equal(result.fields[field].at, null, 'A missing component time is unknown; the response time never stands in for it');
     assert.equal(result.fields[field].measurementAt, null, 'Security measurement provenance must stay unknown');
     assert.equal(result.night.securityFresh, false);
     assert.match(h.state.notifications[0].body, /could not be confirmed/);
@@ -87,7 +87,7 @@ test('fresh root response times cannot substitute for missing or invalid securit
     ];
     const { h, result } = await evening({ responseMetrics, responseTime: iso(TIME) });
     const field = component === 'hood' ? 'doors' : 'lock';
-    assert.equal(result.fields[field].at, null, 'Future component times leave the overall security time unknown');
+    assert.ok(result.fields[field].at === null || result.fields[field].at <= TIME, 'A future component time is never displayed as a measurement');
     assert.equal(result.fields[field].measurementAt, null, 'The earliest aggregate time must not hide an untrusted future component');
     assert.equal(result.night.securityFresh, false); assert.match(h.state.notifications[0].body, /could not be confirmed/);
   }
@@ -105,14 +105,21 @@ test('explicit Locked and Closed measurements within five minutes permit the opt
   }
 });
 
+test('a hood reading alone is not fresh evidence that the doors are closed', async () => {
+  const responseMetrics = metrics(); delete responseMetrics.doorStatus;
+  const { h, result } = await evening({ responseMetrics });
+  assert.equal(result.fields.doors.value, 'Unknown'); assert.equal(result.fields.doors.measurementAt, null);
+  assert.equal(result.night.securityFresh, false); assert.match(h.state.notifications[0].body, /could not be confirmed/);
+});
+
 test('known security and low-fuel problems still alert when optional positive notices are off', async () => {
   const securityProblem = await evening({ notifyOk: false, responseMetrics: metrics(TIME - 1000, { lock: 'UNLOCKED', doors: 'AJAR' }) });
   assert.deepEqual(plain(securityProblem.result.night.problems), ['Unlocked', 'Door, hood or tailgate open']);
   assert.equal(securityProblem.h.state.notifications.length, 1);
-  assert.equal(securityProblem.h.state.notifications[0].body, 'Unlocked · Door, hood or tailgate open');
+  assert.equal(securityProblem.h.state.notifications[0].body, 'Unlocked · Door, hood or tailgate open · Check reading ages in FordWidget.');
   const fuelProblem = await evening({ notifyOk: false, responseMetrics: { fuelLevel: { value: 9, updateTime: iso(TIME) } } });
   assert.equal(fuelProblem.result.night.securityFresh, false); assert.deepEqual(plain(fuelProblem.result.night.problems), ['Fuel 9%']);
-  assert.equal(fuelProblem.h.state.notifications.length, 1); assert.equal(fuelProblem.h.state.notifications[0].body, 'Fuel 9%');
+  assert.equal(fuelProblem.h.state.notifications.length, 1); assert.equal(fuelProblem.h.state.notifications[0].body, 'Fuel 9% · Check reading ages in FordWidget.');
 });
 
 test('turning off optional positive notices suppresses fresh and limited notices; disabling the check performs no read', async () => {

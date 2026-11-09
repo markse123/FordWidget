@@ -2,6 +2,8 @@
 // Original Wake, engine and lock actions keep their existing handlers.
 AppController.prototype.refreshWidget = async function(prefs) {
   requireApp();
+  if (prefs && prefs.compatibility && prefs.compatibility.commands && prefs.compatibility.commands.refresh === false)
+    throw new Error('This command is disabled in Vehicle features.');
   const vin = prefs && prefs.vin, steps = {};
   let attemptAt = null;
   const stageCodes = {
@@ -141,7 +143,7 @@ AppController.prototype.refreshWidget = async function(prefs) {
   return finish('completed', lines.join('\n'));
 };
 const WIDGET_REFRESH_ORIGINAL_ACTION = AppController.prototype.action;
-AppController.prototype.action = async function(action, prefs) {
+AppController.prototype.action = async function(action, prefs, ...rest) {
   if (action === 'refreshwidget') return this.refreshWidget(prefs);
-  return WIDGET_REFRESH_ORIGINAL_ACTION.call(this, action, prefs);
+  return WIDGET_REFRESH_ORIGINAL_ACTION.call(this, action, prefs, ...rest);
 };

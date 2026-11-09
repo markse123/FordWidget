@@ -150,10 +150,16 @@ function ppoAdditiveSummary(renderer, widget, family, selected, originalText) {
 }
 function ppoBuildAdditive(renderer, family, notice, selected) {
   const small = family === 'small', large = family === 'large' || family === 'extraLarge';
-  const names = ['frame', 'text', 'truck', 'pill', 'buttons', 'tires', '_ppoBeforeFooter'];
+  const names = ['frame', 'text', 'truck', 'pill', 'buttons', 'tires', '_ppoBeforeControls', '_ppoBeforeFooter'];
   const descriptors = Object.create(null), saved = Object.create(null);
   for (const name of names) { descriptors[name] = Object.getOwnPropertyDescriptor(renderer, name); saved[name] = renderer[name]; }
   let widget = null, inserted = false;
+  const insert = root => {
+    if (inserted || root !== widget) return;
+    inserted = true; root.addSpacer(large ? 4 : 2);
+    if (large) ppoDashboardPanel(renderer, root, selected, saved.text);
+    else ppoAdditiveSummary(renderer, root, family, selected, saved.text);
+  };
   try {
     // Compact the existing layout instead of replacing or filtering its content.
     // All overrides are instance-local and restored even if rendering throws.
@@ -161,22 +167,15 @@ function ppoBuildAdditive(renderer, family, notice, selected) {
       widget = saved.frame.call(this, large ? [8, 12, 7, 12] : small ? [8, 10, 7, 10] : [6, 11, 6, 11]);
       return widget;
     };
-    if (large) renderer._ppoBeforeFooter = function(root) {
-      if (typeof saved._ppoBeforeFooter === 'function') saved._ppoBeforeFooter.call(this, root);
-      if (!inserted && root === widget) {
-        inserted = true;
-        root.addSpacer(6);
-        ppoAdditiveSummary(this, root, family, selected, saved.text);
-      }
+    for (const name of ['_ppoBeforeControls', '_ppoBeforeFooter']) renderer[name] = function(root) {
+      if (typeof saved[name] === 'function') saved[name].call(this, root);
+      insert(root);
     };
     renderer.text = function(stack, content, size = 12, bold = false, color = this.ink) {
       // Upstream's final root text is its nine-point, non-bold timestamp/notice.
       // Check the root and text signature, so arbitrary small-widget notices work.
       // This also remains a fallback for bases without the before-footer hook.
-      if (!inserted && widget && stack === widget && size === 9 && bold === false) {
-        inserted = true;
-        ppoAdditiveSummary(this, widget, family, selected, saved.text);
-      }
+      if (!inserted && widget && stack === widget && size === 9 && bold === false) insert(widget);
       return saved.text.call(this, stack, content, Math.max(7, size * (small ? 0.85 : large ? 0.9 : 0.88)), bold, color);
     };
     renderer.truck = function(stack, width, height) {
@@ -193,9 +192,7 @@ function ppoBuildAdditive(renderer, family, notice, selected) {
       pill.setPadding(2, 5, 2, 5); return pill;
     };
     renderer.buttons = function(stack, columns, width, height) {
-      const controls = stack.addStack(); controls.layoutVertically(); controls.spacing = 2;
-      saved.text.call(this, controls, 'Engine / locks / refresh', large ? 8 : 7, true, this.muted);
-      return saved.buttons.call(this, controls, columns, width, Math.min(height, large ? 40 : 34));
+      return saved.buttons.call(this, stack, columns, width, Math.min(height, large ? 34 : 30));
     };
     return PPO_UI_ORIGINAL_BUILD.call(renderer, family, notice);
   } finally {
@@ -337,8 +334,8 @@ AppController.prototype.proPowerDetails = async function(prefs) {
   }
 };
 const PPO_UI_ORIGINAL_ACTION = AppController.prototype.action;
-AppController.prototype.action = async function(action, prefs) {
-  if (!['propower', 'ppofetch', 'ppostatus'].includes(action)) return PPO_UI_ORIGINAL_ACTION.call(this, action, prefs);
+AppController.prototype.action = async function(action, prefs, compatibilityTest = false) {
+  if (!['propower', 'ppofetch', 'ppostatus'].includes(action)) return PPO_UI_ORIGINAL_ACTION.call(this, action, prefs, compatibilityTest);
   requireApp();
   if (action === 'ppofetch') {
     try { const result = await new FordAPIClient(this.auth, this.store, prefs).readProPower(true); await message('Pro Power cloud cache', result.note); }

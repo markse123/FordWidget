@@ -1,29 +1,51 @@
 """Build an isolated, additive single-file Scriptable widget from pinned upstream."""
 from pathlib import Path
 import hashlib,json
+from release import read_version
 
 folder=Path(__file__).resolve().parent
 root=folder.parent
 out=root
-version='0.1.8'
-commit='1b129eb6155fa7c0a1d14592be6983366943d31b'
+version=read_version((folder/'version.json').read_bytes())
+commit='b7f7e2866c014445b2bec831c237925d3ca61b5f'
 base=(folder/'FordWidget.upstream.js').read_text()
-expected='2b3502240739b036746c3ad42a247c40e7c0de2ef1612789f60c8125dcfde2a6'
-assert hashlib.sha256(base.encode()).hexdigest()==expected,'Pinned upstream source changed'
+expected='605ba8cfba29214ad0e40f3d4b7e6b71d8fd9b9fcd0f42131ec6104485037fab'
+if hashlib.sha256(base.encode()).hexdigest()!=expected:
+ raise ValueError('Pinned upstream source changed')
 source=base
 patches=[]
 def replace(before,after,label):
  global source
- assert source.count(before)==1,(label,source.count(before))
+ if source.count(before)!=1:
+  raise ValueError(f'{label}: expected one patch target, got {source.count(before)}')
  source=source.replace(before,after)
  patches.append(label)
 
-# Keep the pinned upstream byte copy intact; reviewed inherited fixes are
-# explicit overlays, separate from the optional Pro Power additions below.
-upstream_fixes=json.loads((folder/'upstream-fixes.json').read_text())
-assert upstream_fixes['upstreamCommit']==commit,'Upstream fix base changed'
-for patch in upstream_fixes['patches']:
- replace(patch['before'],patch['after'],patch['label'])
+# The five reviewed fixes are part of this upstream pin, not duplicate overlays.
+merged_fix_prs=['https://github.com/rushilpunu/FordWidget/pull/'+str(i) for i in range(1,6)]
+
+# Keep the location opt-out effective before a cooldown return and from new setup UI.
+replace("  async getVehicleStatus() {\n    this.store.assertLease();", "  async getVehicleStatus() {\n    this.store.assertLease();\n    if (!parkedLocationEnabled(this.prefs) || !parkedLocationEnabled()) this.store.purgeLocation();", 'purge disabled location before returning cooldown data')
+replace("      prefs.widget = Object.assign({}, cfg, { show }); prefs.compatibility = { commands, verified }; secretSet('vehicle', prefs);", "      prefs.widget = Object.assign({}, cfg, { show }); prefs.compatibility = { commands, verified }; saveVehiclePreferences(this.store, prefs);", 'guard Vehicle features changes and purge disabled location')
+replace("    prefs.widget = Object.assign({}, cfg, { show }); prefs.compatibility = { commands, verified }; secretSet('vehicle', prefs);\n  }", "    prefs.widget = Object.assign({}, cfg, { show }); prefs.compatibility = { commands, verified }; saveVehiclePreferences(this.store, prefs);\n  }", 'guard final Vehicle features save and purge disabled location')
+replace("if (await confirm.presentAlert() === 0) { prefs.widget = previewPrefs.widget; secretSet('vehicle', prefs); return; }", "if (await confirm.presentAlert() === 0) { prefs.widget = previewPrefs.widget; saveVehiclePreferences(this.store, prefs); return; }", 'guard gallery saves against a displaced app session or changed vehicle')
+replace("      prefs.alerts = next; secretSet('vehicle', prefs);", "      prefs.alerts = next; saveVehiclePreferences(this.store, prefs);", 'guard alert saves against a displaced app session or changed vehicle')
+replace("class AppController {", (folder/'ui-preferences.js').read_text()+"\nclass AppController {", 'add a foreground session and vehicle guard for new settings saves')
+
+replace("  async acquire() {", (folder/'lease-retirement.js').read_text()+"  async acquire() {", 'add displacement-verified lease retirement without compare-and-delete assumptions')
+replace("      this.fm.remove(this.lockPath);\n    }\n    const owner = uid(), temp = this.lockPath + '.' + owner;\n    this.fm.writeString(temp, JSON.stringify({ owner, started: now(), until: now() + SETTINGS.lease }));", "      if (!this.retireLease(old)) throw new Error('Another run owns the app session. Try again later.');\n    }\n    const owner = uid(), temp = this.lockPath + '.' + owner;\n    this.fm.writeString(temp, JSON.stringify({ owner, started: now(), until: now() + SETTINGS.lease }));", 'retire only the foreground lease actually reviewed before takeover')
+replace("      this.fm.remove(this.lockPath);\n    }\n    const owner = uid(), temp = this.lockPath + '.' + owner;\n    this.fm.writeString(temp, JSON.stringify({ owner, started: now(), until: now() + 90000, background: true }));", "      if (!this.retireLease(old)) return false;\n    }\n    const owner = uid(), temp = this.lockPath + '.' + owner;\n    this.fm.writeString(temp, JSON.stringify({ owner, started: now(), until: now() + 90000, background: true }));", 'retire only the expired background lease actually inspected')
+replace("    if (this.owner && l && l.owner === this.owner) this.fm.remove(this.lockPath);", "    if (this.owner && l && l.owner === this.owner) this.retireLease(l);", 'release only the actual displaced owner record without deleting a successor')
+
+# FileManager.move replaces its target; an exclusive lease claim must use copy.
+replace("    // Native move refuses an existing destination: concurrent app runs fail closed.\n    try { this.fm.move(temp, this.lockPath); this.owner = owner; this.assertLease(); }\n    catch (_) { if (this.fm.fileExists(temp)) this.fm.remove(temp); throw new Error('Another run owns the app session. Try again later.'); }",
+        "    // Native copy refuses an existing destination: concurrent app runs fail closed.\n    try { this.fm.copy(temp, this.lockPath); this.owner = owner; this.assertLease(); }\n    catch (_) { this.owner = null; throw new Error('Another run owns the app session. Try again later.'); }\n    finally { try { if (this.fm.fileExists(temp)) this.fm.remove(temp); } catch (_) {} }",
+        'claim foreground leases without overwriting a concurrent owner')
+replace("    try { this.fm.move(temp, this.lockPath); }\n    catch (_) { if (this.fm.fileExists(temp)) this.fm.remove(temp); return false; }\n    this.owner = owner; this.background = true;\n    return true;",
+        "    try {\n      this.fm.copy(temp, this.lockPath); this.owner = owner; this.background = true; this.assertLease();\n      return true;\n    } catch (_) { this.owner = null; this.background = false; return false; }\n    finally { try { if (this.fm.fileExists(temp)) this.fm.remove(temp); } catch (_) {} }",
+        'claim background leases without overwriting a concurrent owner')
+
+replace("    // Sliding lease: an active run keeps ownership; a killed run frees it after `lease`.\n    this.fm.writeString(this.lockPath, JSON.stringify({ owner: this.owner, started: l.started,\n      until: now() + (this.background ? 90000 : SETTINGS.lease), background: !!this.background }));", "    // Ownership is immutable until release/takeover/expiry. A stale run must\n    // never rewrite this shared file and restore itself over a newer owner.", 'keep lease checks read-only so stale runs cannot reclaim a newer session')
 
 license=(root/'LICENSE').read_text()
 header='''/*
@@ -78,8 +100,13 @@ replace("    this.auth.gate('commands');\n    let c = this.store.read() || { ver
         "    this.auth.gate('commands');\n    if (command === 'refresh') this.auth.gate('commands.generalStatus');\n    let c = this.store.read() || { version: 1, vin, fields: {} };",
         'honor the general-status server gate before legacy Wake dispatch')
 replace("secretSet('gate.' + name, { failures, next: now() + delay });", "secretSet('gate.' + name, { failures, next: now() + delay,\n      httpStatus: typeof status === 'number' && Number.isInteger(status) && (status === 0 || status >= 100 && status <= 599) ? status : null, failedAt: now() });", 'retain safe status and time for future failures without changing backoff')
-replace("['refresh', 'Refresh', 'arrow.clockwise']", "['refreshwidget', 'Refresh', 'arrow.clockwise']", 'widget Refresh runs the combined refresh while legacy Wake remains available')
-replace("    w.addSpacer();\n    const known = Object.values(this.fields)", "    if (typeof this._ppoBeforeFooter === 'function') this._ppoBeforeFooter(w);\n    w.addSpacer();\n    const known = Object.values(this.fields)", 'allow the large combined PPO section before flexible footer space')
+replace("b.url = this.url(action);", "b.url = this.url(action === 'refresh' ? 'refreshwidget' : action);", 'route widget Refresh to combined refresh after upstream compatibility filtering')
+replace("    if (!this.runningBadge(w, 11)) this.lockPill(w);\n    w.addSpacer();", "    if (!this.runningBadge(w, 11)) this.lockPill(w);\n    if (typeof this._ppoBeforeFooter === 'function') this._ppoBeforeFooter(w);\n    w.addSpacer();", 'allow an additive PPO section in Classic small')
+replace("w.addSpacer(4); this.parkedRow(w, 10); w.addSpacer(); this.buttons(w, 4, 62, 38);", "w.addSpacer(4); this.parkedRow(w, 10); if (typeof this._ppoBeforeControls === 'function') this._ppoBeforeControls(w); w.addSpacer(); this.buttons(w, 4, 62, 38);", 'allow an additive PPO section before Showcase medium controls')
+replace("        w.addSpacer(); this.buttons(w, 4, 65, 38);", "        if (typeof this._ppoBeforeControls === 'function') this._ppoBeforeControls(w);\n        w.addSpacer(); this.buttons(w, 4, 65, 38);", 'allow an additive PPO section before gallery large controls')
+replace("    w.addSpacer();\n    const known = Object.values(this.fields).some", "    if (typeof this._ppoBeforeFooter === 'function') this._ppoBeforeFooter(w);\n    w.addSpacer();\n    const known = Object.values(this.fields).some", 'allow an additive PPO section before gallery footer')
+replace("      if (large && controls) { w.addSpacer(8); this.buttons(w, 4, 70, 46); }", "      if (large && controls) { if (typeof this._ppoBeforeControls === 'function') this._ppoBeforeControls(w); w.addSpacer(8); this.buttons(w, 4, 70, 46); }", 'allow an additive PPO section before Classic large controls')
+replace("    w.addSpacer();\n    const known = Object.values(this.fields).filter", "    if (typeof this._ppoBeforeFooter === 'function') this._ppoBeforeFooter(w);\n    w.addSpacer();\n    const known = Object.values(this.fields).filter", 'allow an additive PPO section before Classic footer')
 replace("      const result = await api.getVehicleStatus();\n      await api.updatePlace();","      const result = await api.getVehicleStatus();\n      if (secretGet('token.mobile')) {\n        try {\n          const power = await api.readProPower();\n          result.note += '\\nPro Power: ' + power.note;\n          result.cache = power.cache;\n        } catch (_) { result.note += '\\nPro Power could not be read. Existing telemetry was retained.'; }\n      }\n      await api.updatePlace();",'add foreground-only independent PPO read to Fetch telemetry')
 replace("        ['View details', () => this.details(prefs)],","        ['View details', () => this.details(prefs)],\n        ['Troubleshooting', () => this.troubleshooting(prefs)],\n        ['Pro Power', () => this.action('propower', prefs)],",'add Pro Power and optional Troubleshooting menu entries')
 replace("menu.title = prefs.name; menu.message =", "menu.title = prefs.name + ' · ' + FORDWIDGET_VERSION; menu.message =", 'identify the installed version in the main menu')
@@ -90,6 +117,6 @@ replace('function selfTest() {\n  const assert', 'function selfTest() {\n  ppoSe
 replace("try { await new AppController().run(); }","// __FORDWIDGET_ENTRY__\ntry { await new AppController().run(); }",'mark entry for offline verification')
 file=out/'FordWidget.js'
 file.write_text(source)
-manifest={'version':version,'upstream':'https://github.com/rushilpunu/FordWidget','upstreamCommit':commit,'upstreamSHA256':expected,'upstreamFixPRs':upstream_fixes['pullRequests'],'outputSHA256':hashlib.sha256(source.encode()).hexdigest(),'changes':patches,'scope':'Optional Pro Power monitoring and reviewed inherited fixes; build and offline checks perform no Ford calls'}
+manifest={'version':version,'upstream':'https://github.com/rushilpunu/FordWidget','upstreamCommit':commit,'upstreamSHA256':expected,'mergedUpstreamFixPRs':merged_fix_prs,'outputSHA256':hashlib.sha256(source.encode()).hexdigest(),'changes':patches,'scope':'Optional Pro Power monitoring on current pinned upstream; build and offline checks perform no Ford calls'}
 (folder/'build-manifest.json').write_text(json.dumps(manifest,indent=2))
 print('Built',file.name,len(source.splitlines()),'lines; SHA256',manifest['outputSHA256'])

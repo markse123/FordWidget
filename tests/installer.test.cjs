@@ -10,7 +10,10 @@ const source = fs.readFileSync(path.join(root, 'docs/installer.js'), 'utf8');
 const widget = fs.readFileSync(path.join(root, 'FordWidget.js'), 'utf8');
 const boundary = source.indexOf('// Installer entry.');
 assert.ok(boundary > 0);
-const oldWidget = widget.replace('FordWidget Pro Power 0.1.8', 'FordWidget Pro Power Preview 0.1.7');
+const widgetVersion = widget.match(/^FordWidget Pro Power ([^\r\n]*)\r?$/m)[1];
+const withVersion = value => widget.replace(/^FordWidget Pro Power [^\r\n]*\r?$/m, 'FordWidget Pro Power ' + value)
+  .replace(/^const FORDWIDGET_VERSION = '[^'\r\n]*';\r?$/m, "const FORDWIDGET_VERSION = '" + value.replace(/^Preview /, '') + "';");
+const oldWidget = withVersion('Preview 0.1.7');
 function load(options = {}) {
   const state = {files: new Map(options.files || []), choices: [...(options.choices || [])], alerts: [], requests: [], ops: [], downloads: [], complete: 0};
   const data = text => ({getBytes: () => Array.from(Buffer.from(text, 'utf8')), toRawString: () => text});
@@ -57,7 +60,8 @@ function load(options = {}) {
     UUID: {string: () => 'synthetic-unique'}, config: {runsInApp: options.inApp !== false, runsInWidget: options.inApp === false},
     Keychain: forbidden, Safari: forbidden, WebView: forbidden, Script: {complete: () => state.complete++}};
   const context = vm.createContext(sandbox);
-  new vm.Script(source.slice(0, boundary) + '\nglobalThis.testAPI={installFordWidget,installerSHA256,installerFork,INSTALL_SOURCE,INSTALL_SHA256};').runInContext(context);
+  const code = options.source === undefined ? source : options.source;
+  new vm.Script(code.slice(0, code.indexOf('// Installer entry.')) + '\nglobalThis.testAPI={installFordWidget,installerSHA256,installerFork,installerVersion,installerCompareVersions,INSTALL_VERSION,INSTALL_SOURCE,INSTALL_SHA256};').runInContext(context);
   return {state, api: context.testAPI, context};
 }
 const file = name => '/cloud/' + name + '.js';
@@ -197,8 +201,8 @@ test('the top-level installer hides untrusted transport errors and completes wit
 });
 
 test('a pinned installer refuses to downgrade a newer installed fork', async () => {
-  for (const version of ['0.1.9', '0.2.0', '1.0.0']) {
-    const newer = widget.replace('FordWidget Pro Power 0.1.8', 'FordWidget Pro Power ' + version);
+  for (const version of ['0.1.10', '0.2.0', '1.0.0', '9007199254740993.0.0']) {
+    const newer = withVersion(version);
     const h = load({files: [[file(name), newer]], choices: [0, 1, {name}]});
     await assert.rejects(run(h), /newer than this installer/);
     assert.equal(h.state.requests.length, 0); assert.deepEqual([...h.state.files], [[file(name), newer]]);
@@ -281,5 +285,62 @@ test('a revision arriving after install but before error cleanup is never unlink
       assert.equal(h.state.files.get(file(name) + '.backup-synthetic-unique'), oldWidget);
       assert.equal(h.state.files.get(file(name) + '.displaced-synthetic-unique'), oldWidget);
     }
+  }
+});
+
+test('malformed, ambiguous or mismatched installed versions fail closed before requests or replacement', async () => {
+  const malformed = ['', '0.1', '01.1.8', '0.1.8-beta', '0.1.8 trailing', '0.1.8.1', 'NaN.1.8', '0.1.8e10', '9'.repeat(65) + '.0.0'];
+  const bad = malformed.map(withVersion).concat([
+    withVersion(widgetVersion + '\nFordWidget Pro Power 0.0.1'),
+    'const unrelated = true;\n' + widget,
+    widget.replace(/^const FORDWIDGET_VERSION = '[^']+';$/m, "const FORDWIDGET_VERSION = '0.0.0';"),
+    widget.replace(/^const FORDWIDGET_VERSION = '[^']+';$/m, "const FORDWIDGET_VERSION = '0.0.0';\nconst FORDWIDGET_VERSION = '0.1.0';")
+  ]);
+  for (const previous of bad) {
+    const h = load({files: [[file(name), previous]], choices: [0, 1, {name}, 0]});
+    await assert.rejects(run(h), /another script/);
+    assert.equal(h.state.requests.length, 0); assert.deepEqual([...h.state.files], [[file(name), previous]]);
+    assert.equal(h.state.alerts.some(a => a.title.startsWith('Replace ')), false);
+  }
+});
+
+test('same-version reinstall and supported older versions retain names and exact recovery copies', async () => {
+  for (const version of [widgetVersion, '0.0.1', '0.1.7', 'Preview 0.1.7']) {
+    const previous = withVersion(version);
+    const h = load({files: [[file(name), previous]], choices: [0, 1, {name}, 0, 0]}); await run(h);
+    assert.equal(h.state.files.get(file(name)), widget);
+    assert.equal(h.state.files.get(file(name) + '.backup-synthetic-unique'), previous);
+  }
+  const legacy = oldWidget.replace(/^const FORDWIDGET_VERSION = '[^']+';\n/m, '');
+  const h = load({files: [[file(name), legacy]], choices: [0, 1, {name}, 0, 0]}); await run(h);
+  assert.equal(h.state.files.get(file(name)), widget);
+  assert.equal(load().api.installerVersion(widget.replace(/\n/g, '\r\n')), widgetVersion);
+});
+
+test('version comparison is exact for large components and rejects noncanonical metadata', () => {
+  const h = load();
+  assert.equal(h.api.installerCompareVersions('0.1.9007199254740993', '0.1.9007199254740992'), 1);
+  assert.equal(h.api.installerCompareVersions('0.1.9007199254740992', '0.1.9007199254740993'), -1);
+  assert.equal(h.api.installerCompareVersions('0.2.0', '0.1.999'), 1);
+  assert.equal(h.api.installerCompareVersions('0.1.8', '0.1.8'), 0);
+  assert.throws(() => h.api.installerCompareVersions('0.1.8-beta', '0.1.8'), /could not be verified/);
+});
+
+test('downloaded header must match the advertised version even when the bytes pass SHA-256', async () => {
+  const digest = crypto.createHash('sha256').update(widget).digest('hex');
+  const alteredInstaller = source.replace(/^const INSTALL_VERSION = '[^']+';$/m, "const INSTALL_VERSION = '0.1.10';")
+    .replace(/^const INSTALL_SHA256 = '[^']+';$/m, "const INSTALL_SHA256 = '" + digest + "';");
+  const h = load({source: alteredInstaller, choices: [0, 0, {name}]});
+  await assert.rejects(run(h), /version did not match/);
+  assert.equal(h.state.requests.length, 1); assert.equal(h.state.files.size, 0);
+});
+
+test('malformed installer release metadata is refused before file access or transport', async () => {
+  for (const [key, value] of [['INSTALL_VERSION', '0.1.8beta'], ['INSTALL_VERSION', '00.1.8'],
+    ['INSTALL_SOURCE', 'https://raw.githubusercontent.com/rushilpunu/FordWidget/main/FordWidget.js'], ['INSTALL_SHA256', 'invalid']]) {
+    const code = source.replace(new RegExp("^const " + key + " = '[^']+';$", 'm'), "const " + key + " = '" + value + "';");
+    const h = load({source: code});
+    await assert.rejects(run(h), /invalid release information/);
+    assert.equal(h.state.requests.length, 0); assert.equal(h.state.ops.length, 0);
   }
 });

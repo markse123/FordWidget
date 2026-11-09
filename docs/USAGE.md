@@ -1,19 +1,19 @@
 # FordWidget Pro Power — usage
 
-These instructions describe **v0.1.8** of [markse123/FordWidget](https://github.com/markse123/FordWidget), derived from [rushilpunu/FordWidget](https://github.com/rushilpunu/FordWidget). The complete original widget remains available, with optional Pro Power monitoring added.
+These instructions describe **v0.1.9** of [markse123/FordWidget](https://github.com/markse123/FordWidget), derived from [rushilpunu/FordWidget](https://github.com/rushilpunu/FordWidget). The complete original widget remains available, with optional Pro Power monitoring added.
 
 ## Install and connect
 
-You need an iPhone with Scriptable, a FordPass account authorized for the vehicle, and an activated vehicle modem. Feature availability depends on the vehicle and account. US sign-in has been tested; Canada has not.
+You need an iPhone with Scriptable, a FordPass account authorized for the vehicle, and an activated vehicle modem. Feature availability depends on the vehicle and account. Development and Pro Power testing have used an F-150; other Ford models and individual features remain unverified. Electric vehicles are outside the current testing scope. US sign-in has been tested; Canada has not.
 
-For the guided installer, open [the install page](https://markse123.github.io/FordWidget/) on your iPhone. Copy the installer into a separate Scriptable script named **Install FordWidget Pro Power** and run it. Choose your script storage and **New installation** or **Update an existing script**. For an update, enter the exact name of your existing fork script, including an older or custom name. The installer checks the pinned download's SHA-256, asks before replacing an existing fork script and saves a backup of its code. It leaves sign-in, settings and vehicle data in place. Run the installed widget separately afterward. You can also install manually:
+For the guided installer, open [the install page](https://markse123.github.io/FordWidget/) on your iPhone. Copy the installer into a separate Scriptable script named **Install FordWidget Pro Power** and run it. Choose your script storage and **New installation** or **Update an existing script**. For an update, enter the exact name of your existing fork script, including an older or custom name. The installer checks the pinned download's SHA-256, refuses downgrades or ambiguous version information, asks before replacing an existing fork script and saves a backup of its code. It leaves sign-in, settings and vehicle data in place. Run the installed widget separately afterward. You can also install manually:
 
 1. Open [FordWidget.js](https://raw.githubusercontent.com/markse123/FordWidget/main/FordWidget.js) and copy all its contents.
 2. In Scriptable, create a script, paste the code and name it **FordWidget Pro Power**.
-3. Run it inside Scriptable. Enter your VIN and a vehicle name locally.
+3. Run it inside Scriptable. Enter your VIN and a vehicle name locally. The offline self-test and **Vehicle features / compatibility** check follow setup. Review the suggested features or finish and rerun the check after connecting FordPass; missing readings are unverified.
 4. Choose **Connect FordPass**. Complete Ford sign-in and any verification. The optional password field can stay blank so you enter the password directly on Ford's page. Close the sign-in window when it finishes.
-5. Run the script again and choose **Fetch telemetry**. FordConnect is optional; its separate setup requires an approved Ford developer application.
-6. Open **Customize widgets**. Choose the original readings and any Pro Power fields you want. Pro Power fields start disabled. Scroll to reach all choices.
+5. Run the script again and choose **Fetch telemetry**, then **Vehicle features / compatibility** to review cloud suggestions and select available readings/controls. FordConnect is optional; its separate setup requires an approved Ford developer application.
+6. Open **Customize widgets**. Choose the original readings and any Pro Power fields you want. Pro Power fields start disabled. Scroll to reach all choices. **Widget gallery** previews a design for each Home Screen size; **Alerts & attention** configures notifications and the optional cached-status indicator.
 
 No running engine or electrical load is needed for installation or a cached read.
 
@@ -28,13 +28,20 @@ The large combined view shows vehicle readings, Pro Power cards and vehicle cont
 
 For a Lock Screen widget, add Scriptable while customizing the Lock Screen, then choose the same script and the desired Parameter. Circular, rectangular and inline views are supported. The first recognized view word selects the Lock Screen view; the original remote-start display behavior remains available.
 
+### Choose a design
+
+Open **Widget gallery**, choose Small, Medium or Large, then tap **Classic**, **Showcase** or **Dashboard** to preview it using your saved readings. Close the preview and choose **Use design** to apply it to that size. Classic remains the default. An individual widget's `classic`, `showcase` or `dashboard` Parameter overrides the shared design choice. Lock Screen views retain their separate Parameters.
+
+Pro Power fields stay optional. Preview the selected size/design to see which readings fit; small and medium widgets cannot show every field at once.
+
 ### Optional Parameters
 
 Naming fields means **show only those fields** and overrides the shared checkboxes. A blank Parameter uses the shared choices.
 
 | Parameter | Result |
 | --- | --- |
-| Blank | Shared Customize widgets choices |
+| Blank | Shared Customize widgets and gallery choices |
+| `classic`, `showcase` or `dashboard` | Override the Home Screen design |
 | `ppoa ppob ppototal ppocapacity` | Focused Pro Power widget |
 | `fuel tires lock ppoa ppob ppototal` | Those original readings plus Pro Power |
 | `ppob` | Pro Power B only |
@@ -43,6 +50,20 @@ Naming fields means **show only those fields** and overrides the shared checkbox
 | `bar` or `psi` | Tire pressure units |
 
 Pro Power fields are `ppoa`, `ppob`, `ppototal` (alias `ppo`) and `ppocapacity`. Original field names remain `photo`, `fuel`, `battery`, `tires`, `oil`, `lock`, `odometer`, `doors`, `temp` and `parked`. Prefix a field with `-` to hide it.
+
+## Check vehicle features
+
+**Vehicle features / compatibility** runs the offline self-test, then uses available cloud or saved data to suggest readings. On first setup, connect FordPass and run Fetch telemetry before rerunning this check for useful cloud suggestions. A missing metric is unverified rather than proof of an unsupported feature; saved data can also be old.
+
+Select the readings and controls available in your Ford app. **Enable reported readings** turns on available suggestions; original choices remain editable in Customize widgets. Existing installations keep their settings until the owner runs this check. Pro Power fields are selected separately in Customize widgets.
+
+Selected controls are unverified until an optional **Test a command…** sends a real command after confirmation and you report whether the vehicle completed it. A Ford receipt alone does not confirm completion. Remote start first requests a lock; test start only with the vehicle parked outdoors. Command and wake cooldowns still apply. Owner confirmation records that test, not a guarantee of future availability. You can skip command testing and rerun the check later.
+
+## Alerts and attention
+
+Open **Alerts & attention** to enable or disable unlocked, door/hood/tailgate open, low tire, low fuel, low oil, low 12V battery and remote-start-running conditions. Adjust tire, fuel, oil and battery thresholds there. These choices apply to the evening check; set its time and optional positive notice in Customize widgets.
+
+**Widget attention** is off by default. When enabled, Home Screen widgets show the first matching condition and the age of cached readings, with a count when more conditions match. It performs no extra cloud read and is unavailable on Lock Screen widgets. Missing data remains unknown; a displayed warning may be old. iOS controls widget redraw and notification timing.
 
 ## Use Pro Power Onboard
 
@@ -107,7 +128,7 @@ Pro Power shows estimated A, B, total and capacity when the available data suppo
 
 There are no outlet or Generator Mode controls in this version. The Lock, Unlock, Start and Stop controls operate the vehicle through the retained original confirmations. Remote start first requests a lock and checks its result. Its countdown can initially be an estimate until Ford supplies a countdown reading. An accepted Stop request preserves the last known running countdown and Stop control while that countdown remains valid. Newer Ford telemetry or countdown expiry ends that running display; an estimated timer is not physical confirmation that the engine stopped.
 
-The optional evening all-good notice requires explicit Locked and Closed readings with their own measurement times within five minutes. Missing, stale or unknown security readings produce limited status; reported problems still trigger alerts.
+The optional evening all-good notice requires explicit Locked and Closed readings with their own measurement times within five minutes. Missing, stale or unknown security readings produce limited status; enabled reported problems still trigger alerts.
 
 iOS decides when Home Screen widgets redraw. The script requests an update after actions, but the displayed widget may lag the app's saved data. Evening checks retain the original read-only behavior and also depend on iOS scheduling.
 
@@ -124,9 +145,10 @@ This fork is isolated from the original FordWidget. Installing it for the first 
 - **Only Pro Power appears:** clear the widget's Parameter, then enable the desired original and Pro Power fields in Customize widgets. A Parameter such as `ppob` deliberately selects only that field.
 - **Readings disagree with the truck:** compare individual source times in View details, run Fetch telemetry and compare again. Reports captured at different times are not equivalent comparisons. Use combined Refresh when a new status request is needed, respecting cooldowns.
 - **A successful request still shows an old reading:** check the field's measurement time and the Pro Power Status result separately. Request completion does not guarantee a new sample.
-- **Fuel was unavailable in an earlier version:** update to v0.1.8 and Fetch telemetry. Ford can report above 100%; the fuel-only fix caps the displayed percentage at 100 and retains the raw reading. Negative or invalid values remain unknown.
+- **Fuel was unavailable in an earlier version:** update to v0.1.9 and Fetch telemetry. Ford can report above 100%; the fuel-only fix caps the displayed percentage at 100 and retains the raw reading. Negative or invalid values remain unknown.
 - **Cooling down:** wait for the indicated interval. Do not clear cooldowns or repeatedly send commands.
 - **“Already running”:** take over only if the earlier Scriptable run has actually stopped.
+- **App session expired:** reopen the script and repeat the action. Foreground sessions last up to 15 minutes; a long-paused dialog cannot save changes or send commands after expiry.
 - **App data changed but the widget did not:** verify the selected script and Run Script interaction setting, preview the size in Scriptable, and allow iOS to redraw it.
 - **Refresh only opens Scriptable without the confirmation:** confirm that the widget selects the updated script and that **When Interacting** is **Run Script**. This intermittent behavior has been observed; a later tap reached the correct prompt, but its cause has not been established. For a Pro Power-only check, open the script's **Pro Power → Request status once…** action directly. If it recurs, note whether Scriptable shows its scripts list or the script's menu, plus the installed version.
 
@@ -140,10 +162,10 @@ Passwords are not saved. Ford tokens and the username use Scriptable's shared Ke
 
 The retained remote-start weather fallback can query Open-Meteo with an approximately 1 km-rounded vehicle location when the truck's own temperature reading is old. It sends no Ford account or token. Location labels use the device's reverse geocoder. Troubleshooting reports are never automatically uploaded.
 
-Turning **Customize widgets → Parked location** off removes position/place data from both cache copies, hides maps/location output and disables the weather location fallback. A per-widget Parameter cannot override that app-wide privacy choice. Saved Home settings remain in Keychain for when you re-enable the feature.
+Turning **Parked location** off in **Customize widgets** or **Vehicle features / compatibility** immediately removes position/place data from both cache copies, hides maps/location output and disables the weather location fallback. A per-widget Parameter cannot override that app-wide privacy choice. Saved Home settings remain in Keychain for when you re-enable the feature.
 
 To uninstall, sign out, delete the script and widgets, and remove the folder with the **legacy storage identifier** `FordWidget Pro Power Preview` from Scriptable's local documents if you also want to remove saved telemetry and photos.
 
 This unofficial client depends on private Ford APIs and compatible, authorized vehicle services. Availability may change. Use engine start only with the vehicle safely parked outdoors.
 
-The fork retains the [MIT License](../LICENSE), original copyright © 2026 rushilpunu, and attribution to [rushilpunu/FordWidget](https://github.com/rushilpunu/FordWidget) at [`1b129eb6155fa7c0a1d14592be6983366943d31b`](https://github.com/rushilpunu/FordWidget/commit/1b129eb6155fa7c0a1d14592be6983366943d31b).
+The fork retains the [MIT License](../LICENSE), original copyright © 2026 rushilpunu, and attribution to [rushilpunu/FordWidget](https://github.com/rushilpunu/FordWidget) at [`b7f7e2866c014445b2bec831c237925d3ca61b5f`](https://github.com/rushilpunu/FordWidget/commit/b7f7e2866c014445b2bec831c237925d3ca61b5f).
