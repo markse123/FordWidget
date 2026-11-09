@@ -119,7 +119,7 @@ test('known security and low-fuel problems still alert when optional positive no
   assert.equal(securityProblem.h.state.notifications[0].body, 'Unlocked · Door, hood or tailgate open · Check reading ages in FordWidget.');
   const fuelProblem = await evening({ notifyOk: false, responseMetrics: { fuelLevel: { value: 9, updateTime: iso(TIME) } } });
   assert.equal(fuelProblem.result.night.securityFresh, false); assert.deepEqual(plain(fuelProblem.result.night.problems), ['Fuel 9%']);
-  assert.equal(fuelProblem.h.state.notifications.length, 1); assert.equal(fuelProblem.h.state.notifications[0].body, 'Fuel 9%');
+  assert.equal(fuelProblem.h.state.notifications.length, 1); assert.equal(fuelProblem.h.state.notifications[0].body, 'Fuel 9% · Check reading ages in FordWidget.');
 });
 
 test('turning off optional positive notices suppresses fresh and limited notices; disabling the check performs no read', async () => {
