@@ -103,6 +103,8 @@ Examples: `buttons -photo` · `fuel tires` · `lock oil odometer`
 
 From 9 PM (you can change this or turn it off in Customize), the first widget refresh reads the truck's last reported state once. It doesn't wake the truck, and it sends you a notification if something needs attention. iOS decides exactly when widgets refresh, so the timing is approximate. It runs inside the widget; no Shortcuts automation is needed.
 
+The optional “all good” notice requires explicit Locked and Closed readings, each with its own measurement timestamp within the past five minutes. A fresh overall response time is not enough. Missing, unknown or older lock/door readings produce a limited-status notice instead; reported problems still trigger alerts.
+
 ## Security & privacy
 
 **Please read before installing.**

@@ -600,9 +600,15 @@ function normalize(payload, vin, source, fetchedAt) {
   if (!root || !root.metrics || typeof root.metrics !== 'object') throw new Error(`${source}: unsupported telemetry schema.`);
   if (root.vin && String(root.vin).toUpperCase() !== vin) throw new Error('Telemetry VIN does not match configured vehicle.');
   const m = root.metrics, out = {};
-  const put = (key, value, entry) => {
+  const put = (key, value, entry, measurementAt = timestamp(entry && entry.updateTime)) => {
     if (value === null || value === undefined) return;
     out[key] = { value, at: timestamp(entry && entry.updateTime) || timestamp(root.updateTime) || null, source, fetchedAt };
+    if (key === 'lock' || key === 'doors') out[key].measurementAt = measurementAt;
+  };
+  const securityMeasurementTime = entries => {
+    const checkedAt = now();
+    const times = entries.map(entry => timestamp(entry.updateTime));
+    return times.every(time => time !== null && time <= checkedAt) ? Math.min(...times) : null;
   };
   for (const [field, key, max] of [['fuel', 'fuelLevel', 100], ['oil', 'oilLifeRemaining', 100], ['battery', 'batteryStateOfCharge', 100]]) {
     const e = m[key]; put(field, bounded(e && e.value, max), e);
@@ -631,13 +637,13 @@ function normalize(payload, vin, source, fetchedAt) {
     const unlocked = locks.find(e => e.value === 'UNLOCKED');
     if (unlocked) put('lock', 'Unlocked', unlocked);
     else if (locks.every(e => ['LOCKED', 'DOUBLE_LOCKED'].includes(e.value)))
-      put('lock', 'Locked', { updateTime: Math.min(...locks.map(e => timestamp(e.updateTime) || 0)) });
+      put('lock', 'Locked', { updateTime: Math.min(...locks.map(e => timestamp(e.updateTime) || 0)) }, securityMeasurementTime(locks));
   }
   const doors = (Array.isArray(m.doorStatus) ? m.doorStatus : []).concat(m.hoodStatus ? [m.hoodStatus] : []);
   const open = doors.find(e => ['OPEN', 'AJAR'].includes(e.value));
   if (open) put('doors', 'Ajar', open);
   else if (doors.length && doors.every(e => e.value === 'CLOSED'))
-    put('doors', 'Closed', { updateTime: Math.min(...doors.map(e => timestamp(e.updateTime) || 0)) });
+    put('doors', 'Closed', { updateTime: Math.min(...doors.map(e => timestamp(e.updateTime) || 0)) }, securityMeasurementTime(doors));
   const temp = m.outsideTemperature, celsius = temp ? finite(temp.value) : null;
   put('outsideTemp', celsius !== null && celsius > -60 && celsius < 70 ? celsius : null, temp);
   const pos = m.position, loc = pos && pos.value && pos.value.location;
@@ -694,6 +700,15 @@ function nightProblems(f) {
   const rs = v('remoteStart');
   if (rs && rs.until > now()) out.push('Engine running (remote start)');
   return out;
+}
+// A fresh cloud response can contain only fuel or another unrelated metric.
+// Confirm each security reading's own measurement time before an all-good notice.
+function nightSecurityFresh(fields, at = now()) {
+  return [['lock', 'Locked'], ['doors', 'Closed']].every(([key, value]) => {
+    const reading = fields && fields[key], time = reading && reading.measurementAt;
+    return reading && reading.value === value && typeof time === 'number' && Number.isFinite(time) &&
+      time > 0 && time <= at && time >= at - 5 * 60000;
+  });
 }
 
 // Only Ford's own hosts may receive the FordPass token when downloading images.
@@ -1245,7 +1260,7 @@ class AppController {
       : c.image && c.image.source ? `${c.image.source} · ${age(c.image.at)}` : 'Not downloaded yet';
     lines.push(`Truck photo: ${photo}`);
     const n = c.night;
-    lines.push(`Evening check: ${!nightSettings(prefs).enabled ? 'Off' : n && n.done ? `${n.problems.length ? n.problems.join(', ') : 'All good'} · ${age(n.at)}` : 'Not run yet'}`);
+    lines.push(`Evening check: ${!nightSettings(prefs).enabled ? 'Off' : n && n.done ? `${n.problems.length ? n.problems.join(', ') : n.securityFresh === true ? 'All good' : 'Limited status; current lock/door readings not confirmed'} · ${age(n.at)}` : 'Not run yet'}`);
     if (c.lastCommand) lines.push(`Last request: ${c.lastCommand.action}\n${c.lastCommand.outcome} · ${age(c.lastCommand.at)}`);
     await message(prefs.name, lines.join('\n\n'));
   }
@@ -1295,10 +1310,12 @@ class AppController {
       c = (await new FordAPIClient(this.auth, this.store, prefs).getVehicleStatus()).cache;
       if (!c.fetchedAt || c.fetchedAt < now() - 5 * 60000) return c;
       const problems = nightProblems(c.fields);
-      c.night = Object.assign({}, c.night, { done: true, at: now(), problems }); this.store.write(c);
+      const securityFresh = nightSecurityFresh(c.fields);
+      c.night = Object.assign({}, c.night, { done: true, at: now(), problems, securityFresh }); this.store.write(c);
       if (problems.length || night.notifyOk) {
         const note = new Notification(); note.title = `${prefs.name || 'F-150'} · evening check`;
-        note.body = problems.length ? problems.join(' · ') : 'Locked, closed and all readings normal.';
+        note.body = problems.length ? problems.join(' · ') : securityFresh ? 'Locked and closed; no problems in the reported readings.'
+          : 'No problems found in available readings. Current lock/door status could not be confirmed.';
         note.openURL = new WidgetRenderer(prefs, c).url();
         try { await note.schedule(); } catch (_) { /* the widget still shows the result */ }
       }
